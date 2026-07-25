@@ -1,0 +1,22 @@
+# Virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Vosk speech model — ~68 MB, downloaded automatically on first run
+models/
+
+# Secrets: the Gemini / ElevenLabs keys live here (or in env vars)
+config.json
+.env
+
+# Spoken-command transcripts
+stark.log
+*.log
+
+# Build output
+build/
+dist/
+*.spec
