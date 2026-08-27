@@ -13,5 +13,6 @@ edge-tts>=6.1.0        # free British neural voice (default Jarvis voice)
 pygame>=2.5.0          # plays the synthesized mp3 audio
 pyautogui>=0.9.54      # system control (volume, media keys, typing, screenshots)
 pyperclip>=1.8.2       # reading and writing the clipboard
+PyGetWindow>=0.0.9     # finding and moving the windows on screen
 Pillow>=10.0.0         # required by pyautogui for screenshots
 PySide6>=6.6.0         # the Jarvis-style HUD overlay

@@ -40,6 +40,14 @@ And he keeps working while you do:
   which.
 - **The clipboard.** "What's on my clipboard", "copy that address down",
   "translate what I copied", "paste it".
+- **The windows on screen.** "Minimize this", "put Chrome on the left", "close
+  that", "what have I got open". Named or whichever is in front, and the name
+  is matched on the program rather than the title, so it works on a Windows
+  running in any language.
+- **A second brain, on your machine.** If Gemini can't answer - the free tier's
+  daily limit, no key, no internet - and you have [Ollama](https://ollama.com)
+  running, Stark carries on with a local model instead of apologising. He says
+  so once, keeps the conversation, and can still run every one of his tools.
 
 ## How it works
 
@@ -48,6 +56,7 @@ And he keeps working while you do:
 | Wake word + when you start/stop talking | [Vosk](https://alphacephei.com/vosk/) (offline, free) |
 | What you actually said | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) `base.en` (offline, free) |
 | Brain (understands & decides) | Google Gemini (free tier, function calling) |
+| Brain when Gemini can't | [Ollama](https://ollama.com) on this machine (optional, free) |
 | Eyes and live answers | Gemini vision + Google Search grounding |
 | Voice | edge-tts British neural (free) → pyttsx3/SAPI5 offline fallback; ElevenLabs optional |
 | HUD | PySide6 (Qt) - transparent, always-on-top, click-through |
@@ -72,6 +81,10 @@ setx GEMINI_API_KEY "..."
 ```json
 { "gemini_api_key": "..." }
 ```
+
+Or skip the key entirely: install [Ollama](https://ollama.com), `ollama pull
+llama3.2`, set `"ollama_only": true`, and Stark runs with no cloud and no
+account at all.
 
 ## Run
 
@@ -98,6 +111,7 @@ speak. Example commands:
 - "Remind me in an hour to call the dentist"
 - "Pause" · "Next song" · "Previous track"
 - "What's on my clipboard?" · "Translate what I copied"
+- "Minimize this" · "Put Chrome on the left" · "What have I got open?"
 
 ## Screen & sound: the Quick Control panel
 
@@ -149,6 +163,12 @@ Edit `config.json` (created from defaults - see `config.py`):
 - `clipboard_speak_chars` - how much of the clipboard to read back before
   cutting it short (default 400; anything longer is a wall of text nobody
   wants read to them).
+- **The local fallback brain:** `ollama_enabled` (on by default, but it does
+  nothing at all unless Ollama is running), `ollama_host`, `ollama_model`
+  (default `llama3.2`). `ollama_only` skips Gemini entirely, which means Stark
+  runs with no API key and no internet. `ollama_takeover_min` is how long he
+  stays local after hitting the daily limit (default 30) rather than retrying
+  a request that is going to fail.
 - **Conversation:** `followup_enabled` and `followup_window_sec` (default 7)
   control the no-wake-word window; set the window to `0` to turn follow-ups off.
 - **Interrupting:** `barge_in` on/off, and `barge_words` - the words that cut
@@ -181,6 +201,8 @@ brain runs against a stubbed client.
 .\.venv\Scripts\python.exe _test_flow.py     # follow-ups and interruptions
 .\.venv\Scripts\python.exe _test_tools.py    # memory, screen, web, clipboard
 .\.venv\Scripts\python.exe _test_timers.py   # timers, reminders, announcements
+.\.venv\Scripts\python.exe _test_windows.py  # finding, moving and closing windows
+.\.venv\Scripts\python.exe _test_local_brain.py  # the fallback brain
 .\.venv\Scripts\python.exe _test_hotkey.py   # push-to-talk really fires
 .\.venv\Scripts\python.exe _test_hud.py      # renders _hud_*.png to look at
 ```
@@ -201,6 +223,12 @@ brain runs against a stubbed client.
   a few seconds late if you are mid-sentence. It does go off while listening
   is paused, on the grounds that you asked for it yourself. Pending timers
   live in `timers.json`, which is git-ignored.
+- Snapping a window sets its position directly rather than sending Win+Left,
+  which is a toggle and would bounce an already-snapped window back to the
+  middle. If a window refuses to go, Stark says so instead of claiming it did.
+- The local brain is only as good as the model you pull; a small one will
+  handle "minimize this" happily and be worse company than Gemini. Stark never
+  installs it: `winget install Ollama.Ollama`, then `ollama pull llama3.2`.
 - What Stark remembers lives in `memory.json`, which is git-ignored. Delete the
   file to wipe it, or say "forget everything".
 - Shutdown/restart run on a 5-second delay; say "Hey Stark, cancel shutdown".
