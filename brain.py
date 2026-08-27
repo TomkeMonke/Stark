@@ -15,6 +15,8 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 import actions
+import lookup
+import memory
 import quick_control
 from config import config
 
@@ -34,6 +36,15 @@ drive the user's Quick Control panel for screen and sound: brightness, warm \
 saved window arrangements - use the quick_control tool for all of those, and for \
 questions about the current settings. Use the provided tools to take action. If \
 the user just wants conversation or an answer, simply reply - do not call a tool.
+
+You can also see and look things up. Use look_at_screen whenever the user refers \
+to something they can see but haven't described - an error, a page, "this". Use \
+answer_from_web for anything that changes or is recent: news, weather, prices, \
+scores, opening hours. Prefer it over answering from memory when being out of \
+date would matter; your own knowledge has a cutoff and theirs doesn't.
+
+You remember things across restarts. Use remember when the user tells you to keep \
+something, and forget when they ask you to drop it.
 
 When a tool reports back, the user hears that sentence, so don't repeat it.
 
@@ -63,8 +74,33 @@ FUNCTION_DECLARATIONS = [
           {"path": _STR}, ["path"]),
     _decl("open_url", "Open a website URL in the default browser.",
           {"url": _STR}, ["url"]),
-    _decl("web_search", "Search the web for a query in the default browser.",
+    _decl("web_search",
+          "Open a web search in the browser, for when the user wants to look "
+          "through results themselves. To answer a question out loud instead, "
+          "use answer_from_web.",
           {"query": _STR}, ["query"]),
+    _decl("answer_from_web",
+          "Answer a question using a live web search: news, weather, prices, "
+          "sports results, opening hours, anything that happened recently or "
+          "changes often. Use this instead of answering from your own knowledge "
+          "whenever the answer could be out of date. Pass the full question.",
+          {"question": _STR}, ["question"]),
+    _decl("look_at_screen",
+          "Look at what is currently on the user's screen and answer a question "
+          "about it. Use this for 'what's on my screen', 'what does this error "
+          "say', 'read this to me', 'what am I looking at', or any question "
+          "about something the user can see but hasn't described. Pass the "
+          "question they asked.",
+          {"question": _STR}, ["question"]),
+    _decl("remember",
+          "Store a fact about the user for future conversations, when they say "
+          "to remember something. Pass the fact as a short statement, e.g. "
+          "'parks in level B2' or 'sister is called Ada'.",
+          {"fact": _STR}, ["fact"]),
+    _decl("forget",
+          "Drop remembered facts matching some words, when the user asks you to "
+          "forget something. Pass 'everything' to clear all of them.",
+          {"about": _STR}, ["about"]),
     _decl("type_text", "Type the given text into whatever window currently has focus.",
           {"text": _STR}, ["text"]),
     _decl("system_control",
@@ -99,6 +135,10 @@ DISPATCH = {
     "open_path": lambda i: actions.open_path(i["path"]),
     "open_url": lambda i: actions.open_url(i["url"]),
     "web_search": lambda i: actions.web_search(i["query"]),
+    "answer_from_web": lambda i: lookup.answer_from_web(i["question"]),
+    "look_at_screen": lambda i: lookup.look_at_screen(i["question"]),
+    "remember": lambda i: memory.remember(i["fact"]),
+    "forget": lambda i: memory.forget(i["about"]),
     "type_text": lambda i: actions.type_text(i["text"]),
     "system_control": lambda i: actions.system_control(i["action"]),
     "quick_control": lambda i: actions.quick_control(
@@ -153,10 +193,16 @@ class Brain:
         self.client = genai.Client(api_key=config.api_key)
         self.model = config["gemini_model"]
         self.history: list[types.Content] = []  # rolling conversation memory
-        self._config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
+        self._tools = [types.Tool(function_declarations=FUNCTION_DECLARATIONS)]
+
+    @property
+    def _config(self) -> types.GenerateContentConfig:
+        """Built per request, so a fact remembered a moment ago is already in
+        the prompt on the very next turn."""
+        return types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT + memory.as_prompt(),
             max_output_tokens=config["max_tokens"],
-            tools=[types.Tool(function_declarations=FUNCTION_DECLARATIONS)],
+            tools=self._tools,
             # We run the tool loop ourselves so we can execute real actions.
             automatic_function_calling=types.AutomaticFunctionCallingConfig(
                 disable=True

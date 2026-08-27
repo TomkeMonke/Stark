@@ -12,6 +12,9 @@ models/
 config.json
 .env
 
+# Facts the user asked Stark to remember - personal, not shared
+memory.json
+
 # Spoken-command transcripts
 stark.log
 *.log

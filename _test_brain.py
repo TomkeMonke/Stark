@@ -69,7 +69,7 @@ def make_brain(chunks, delay=0.0, error=None) -> Brain:
     b = Brain.__new__(Brain)
     b.model = "fake-model"
     b.history = []
-    b._config = None
+    b._tools = []
     b.client = pytypes.SimpleNamespace(models=FakeModels(chunks, delay, error))
     return b
 
