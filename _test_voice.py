@@ -237,6 +237,33 @@ def test_barge_detection(engine: VoiceEngine) -> None:
           engine._barge_heard(barge) is False)
 
 
+def test_wake_interruptions(engine: VoiceEngine) -> None:
+    """The two ways out of the wait that aren't a wake word."""
+    print("\nwaiting for a reason to wake")
+    import threading
+
+    engine._drain()
+    hot, announce = threading.Event(), threading.Event()
+
+    hot.set()
+    check("the hotkey wakes him", engine.wait_for_wake(wake_event=hot) == "hotkey")
+    check("and is consumed, so it fires once", not hot.is_set())
+
+    announce.set()
+    why = engine.wait_for_wake(wake_event=hot, announce_event=announce)
+    check("something to say wakes him too", why == "announce", why)
+    check("the queue is left for the worker to empty", announce.is_set())
+
+    check("a timer goes off even while listening is paused",
+          engine.wait_for_wake(is_paused=lambda: True, announce_event=announce)
+          == "announce")
+
+    hot.set()
+    check("the user asking comes first",
+          engine.wait_for_wake(wake_event=hot, announce_event=announce) == "hotkey")
+    announce.clear()
+
+
 def test_speaks_a_stream() -> None:
     print("\nspeaking a live stream (played silently)")
     engine = VoiceEngine.__new__(VoiceEngine)  # no mic needed to synthesize
@@ -297,6 +324,7 @@ def main() -> int:
     test_whisper(engine)
     test_followup_window(engine)
     test_barge_detection(engine)
+    test_wake_interruptions(engine)
     engine.close()
 
     test_speaks_a_stream()

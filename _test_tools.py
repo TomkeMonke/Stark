@@ -1,20 +1,25 @@
-"""Checks for what Stark remembers, what he can see, and what he looks up.
+"""Checks for what Stark remembers, sees, looks up, copies and plays.
 
 The Gemini client is stubbed, so nothing here makes a request or needs a key.
 The screenshot is real - it exercises the actual capture and downscale - but it
-only ever reaches the stub.
+only ever reaches the stub. The clipboard and the media keys are stubbed the
+other way round, at the library: a test has no business overwriting what the
+user has copied, or pausing their music.
 
 Run:  .venv\\Scripts\\python.exe _test_tools.py
 """
 from __future__ import annotations
 
+import sys
 import tempfile
 import types as pytypes
 from pathlib import Path
 
 from google.genai import types
 
+import actions
 import brain as B
+import clipboard
 import lookup
 import memory
 
@@ -49,6 +54,48 @@ def stub(reply="Eighteen degrees and overcast.", error=None) -> FakeModels:
     models = FakeModels(reply, error)
     lookup._client = pytypes.SimpleNamespace(models=models)
     return models
+
+
+class FakeModule:
+    """Stands in for a library actions.py imports inside a function."""
+
+    def __init__(self, name: str, **attrs) -> None:
+        self.name = name
+        self.calls: list = []
+        for key, value in attrs.items():
+            setattr(self, key, value)
+
+    def __enter__(self):
+        self._saved = sys.modules.get(self.name)
+        sys.modules[self.name] = self
+        return self
+
+    def __exit__(self, *exc):
+        if self._saved is None:
+            sys.modules.pop(self.name, None)
+        else:
+            sys.modules[self.name] = self._saved
+
+
+def fake_clipboard(contents: str = "") -> FakeModule:
+    box = {"text": contents}
+    mod = FakeModule("pyperclip")
+    mod.paste = lambda: box["text"]
+
+    def copy(new):
+        box["text"] = new
+        mod.calls.append(new)
+
+    mod.copy = copy
+    mod.box = box
+    return mod
+
+
+def fake_keyboard() -> FakeModule:
+    mod = FakeModule("pyautogui")
+    mod.press = lambda key: mod.calls.append(key)
+    mod.hotkey = lambda *keys: mod.calls.append("+".join(keys))
+    return mod
 
 
 # ----- memory ------------------------------------------------------------
@@ -188,6 +235,119 @@ def test_answer_from_web() -> None:
 
 
 # ----- wiring ------------------------------------------------------------
+# ----- the clipboard ----------------------------------------------------
+def test_read_clipboard() -> None:
+    print("\nreading the clipboard")
+    with fake_clipboard("https://example.com/thing"):
+        said = clipboard.read_aloud()
+        check("what was copied is read back", said == "https://example.com/thing",
+              said)
+
+    with fake_clipboard("   "):
+        check("an empty clipboard says so",
+              "nothing on your clipboard" in clipboard.read_aloud(),
+              clipboard.read_aloud())
+
+    with fake_clipboard("line one\nline two\n\n\tline three"):
+        said = clipboard.read_aloud()
+        check("newlines and tabs are flattened for the voice",
+              said == "line one line two line three", repr(said))
+
+    limit = int(config_limit())
+    with fake_clipboard("word " * 400):
+        said = clipboard.read_aloud()
+        check("a wall of text is cut short rather than read out",
+              len(said) < limit + 40, len(said))
+        check("and says that it goes on", said.endswith("and it goes on, sir."),
+              said[-40:])
+        check("cut at a word, not mid-word", "  " not in said, said[-60:])
+
+
+def config_limit():
+    from config import config
+
+    return config["clipboard_speak_chars"]
+
+
+def test_write_clipboard() -> None:
+    print("\nputting something on the clipboard")
+    with fake_clipboard("old") as clip:
+        said = clipboard.write("the new thing")
+        check("it is copied", clip.box["text"] == "the new thing", clip.box)
+        check("and confirmed", said == "Copied to your clipboard.", said)
+
+    with fake_clipboard("old") as clip:
+        said = clipboard.write("   ")
+        check("copying nothing is refused", "nothing to copy" in said, said)
+        check("and the clipboard is left alone", clip.box["text"] == "old", clip.box)
+
+
+def test_paste() -> None:
+    print("\npasting")
+    with fake_clipboard("something"), fake_keyboard() as keys:
+        said = clipboard.paste()
+        check("ctrl+v is sent", keys.calls == ["ctrl+v"], keys.calls)
+        check("and confirmed", said == "Pasted.", said)
+
+    with fake_clipboard(""), fake_keyboard() as keys:
+        said = clipboard.paste()
+        check("pasting an empty clipboard presses nothing", keys.calls == [],
+              keys.calls)
+        check("and says why", "nothing on your clipboard" in said, said)
+
+    with fake_clipboard("something"), fake_keyboard() as keys:
+        said = actions.system_control("paste")
+        check("'paste' reaches it through system_control",
+              keys.calls == ["ctrl+v"] and said == "Pasted.", (keys.calls, said))
+
+
+def test_clipboard_question() -> None:
+    print("\nasking about the clipboard")
+    models = stub("It says the file could not be found.")
+    with fake_clipboard("FileNotFoundError: no such file or directory"):
+        said = lookup.answer_about_clipboard("what does this mean")
+    check("the answer is spoken back",
+          said == "It says the file could not be found.", said)
+
+    sent = " ".join(p.text for p in models.seen[0]["contents"][0].parts)
+    check("the copied text went to the model", "FileNotFoundError" in sent, sent)
+    check("and so did the question", "what does this mean" in sent, sent)
+
+    stub("anything")
+    with fake_clipboard("   "):
+        said = lookup.answer_about_clipboard("translate this")
+    check("an empty clipboard never costs a request",
+          "nothing on your clipboard" in said, said)
+
+    models = stub("Fine.")
+    with fake_clipboard("x" * (clipboard.MAX_MODEL_CHARS + 5000)):
+        lookup.answer_about_clipboard("summarize this")
+    sent = models.seen[0]["contents"][0].parts[0].text
+    check("an enormous clipboard is trimmed before sending",
+          len(sent) < clipboard.MAX_MODEL_CHARS + 100, len(sent))
+
+
+# ----- the media keys ---------------------------------------------------
+def test_media_control() -> None:
+    print("\nthe media keys")
+    for action, key in (("play_pause", "playpause"), ("next_track", "nexttrack"),
+                        ("previous_track", "prevtrack"), ("stop", "stop")):
+        with fake_keyboard() as keys:
+            said = actions.media_control(action)
+        check(f"{action} presses {key} once", keys.calls == [key], keys.calls)
+        check(f"{action} says what it did", said.endswith("."), said)
+
+    with fake_keyboard() as keys:
+        said = actions.media_control("Play Pause")
+        check("it is forgiving about spacing and case", keys.calls == ["playpause"],
+              keys.calls)
+
+    with fake_keyboard() as keys:
+        said = actions.media_control("rewind")
+        check("an unknown action presses nothing", keys.calls == [], keys.calls)
+        check("and says so", "don't know" in said, said)
+
+
 def test_tool_wiring() -> None:
     print("\ntool wiring")
     declared = {d.name for d in B.FUNCTION_DECLARATIONS}
@@ -197,15 +357,49 @@ def test_tool_wiring() -> None:
     check("every runnable tool is declared", dispatched - declared == set(),
           dispatched - declared)
 
-    for name in ("look_at_screen", "answer_from_web", "remember", "forget"):
+    for name in ("look_at_screen", "answer_from_web", "remember", "forget",
+                 "set_timer", "cancel_timer", "list_timers", "media_control",
+                 "read_clipboard", "copy_to_clipboard", "answer_about_clipboard"):
         check(f"{name} is wired up", name in declared and name in dispatched)
 
     # The arguments the model is told to send must be the ones dispatch reads.
     for decl in B.FUNCTION_DECLARATIONS:
+        if decl.parameters is None:  # takes nothing at all
+            continue
         required = set(decl.parameters.required or [])
         props = set(decl.parameters.properties or {})
         check(f"{decl.name} only requires arguments it declares",
               required <= props, (required, props))
+
+    for name in ("list_timers", "read_clipboard"):
+        decl = next(d for d in B.FUNCTION_DECLARATIONS if d.name == name)
+        check(f"{name} declares no parameters", decl.parameters is None,
+              decl.parameters)
+
+    check("the media actions offered are the ones that work",
+          set(next(d for d in B.FUNCTION_DECLARATIONS
+                   if d.name == "media_control").parameters.properties["action"].enum)
+          == set(actions.MEDIA_KEYS))
+
+    system = next(d for d in B.FUNCTION_DECLARATIONS if d.name == "system_control")
+    check("paste is offered as a system action",
+          "paste" in system.parameters.properties["action"].enum)
+
+
+def test_optional_arguments() -> None:
+    """The model can leave out anything not required - dispatch must cope."""
+    print("\ncalls with the optional arguments left out")
+    import timers
+
+    with tempfile.TemporaryDirectory() as tmp:
+        timers.TIMERS_PATH = Path(tmp) / "timers.json"
+        said = B.DISPATCH["set_timer"]({"seconds": 60})
+        check("a timer with no label still sets",
+              said == "Timer set for 1 minute.", said)
+        check("cancelling with no argument still cancels",
+              B.DISPATCH["cancel_timer"]({}) == "Timer cancelled.", timers.load())
+        check("listing takes nothing at all",
+              B.DISPATCH["list_timers"]({}) == "No timers running, sir.")
 
 
 def test_memory_reaches_the_prompt() -> None:
@@ -229,7 +423,13 @@ def main() -> int:
     test_look_at_screen()
     test_look_at_screen_errors()
     test_answer_from_web()
+    test_read_clipboard()
+    test_write_clipboard()
+    test_paste()
+    test_clipboard_question()
+    test_media_control()
     test_tool_wiring()
+    test_optional_arguments()
     test_memory_reaches_the_prompt()
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0

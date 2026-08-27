@@ -8,6 +8,7 @@ tier - get a key at https://aistudio.google.com/apikey
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Iterator
 
 from google import genai
@@ -15,9 +16,11 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 import actions
+import clipboard
 import lookup
 import memory
 import quick_control
+import timers
 from config import config
 
 SYSTEM_PROMPT = """You are Stark, a personal AI assistant modeled on J.A.R.V.I.S. \
@@ -30,7 +33,8 @@ is ideal, since everything you say is spoken aloud. Never use markdown, bullet \
 points, emoji, or code blocks in your spoken replies.
 
 Capabilities: you can open applications and files, open websites, search the web, \
-control the system (volume, lock, sleep, screenshots), and type text. You also \
+control the system (volume, lock, sleep, screenshots), type text, work the \
+media keys for whatever is playing, and read or set the clipboard. You also \
 drive the user's Quick Control panel for screen and sound: brightness, warm \
 (night) mode, exact or per-app volume, scene presets, keep-awake, and recalling \
 saved window arrangements - use the quick_control tool for all of those, and for \
@@ -46,6 +50,16 @@ date would matter; your own knowledge has a cutoff and theirs doesn't.
 You remember things across restarts. Use remember when the user tells you to keep \
 something, and forget when they ask you to drop it.
 
+Timers and reminders: set_timer takes a number of seconds, so work out the \
+duration yourself - "quarter of an hour" is 900, and "remind me at six" is the \
+number of seconds between the current time given below and six o'clock. A timer \
+goes off whatever you are doing, and even while listening is paused, so never \
+say you have set one unless you actually called the tool.
+
+The clipboard: read_clipboard says the contents back word for word and costs \
+nothing. Use answer_about_clipboard instead when the user wants something done \
+with it - translated, summarized, explained.
+
 When a tool reports back, the user hears that sentence, so don't repeat it.
 
 Safety: for shutdown or restart, briefly confirm what you're about to do in your \
@@ -53,15 +67,17 @@ reply. If a request is ambiguous, ask one short clarifying question instead of \
 guessing."""
 
 _STR = types.Schema(type=types.Type.STRING)
+_INT = types.Schema(type=types.Type.INTEGER)
 
 
 def _decl(name, description, properties, required):
+    # A tool that takes nothing declares no parameters at all: an object schema
+    # with an empty property list is not something every model will accept.
+    params = types.Schema(
+        type=types.Type.OBJECT, properties=properties, required=required
+    ) if properties else None
     return types.FunctionDeclaration(
-        name=name,
-        description=description,
-        parameters=types.Schema(
-            type=types.Type.OBJECT, properties=properties, required=required
-        ),
+        name=name, description=description, parameters=params
     )
 
 
@@ -101,15 +117,53 @@ FUNCTION_DECLARATIONS = [
           "Drop remembered facts matching some words, when the user asks you to "
           "forget something. Pass 'everything' to clear all of them.",
           {"about": _STR}, ["about"]),
+    _decl("set_timer",
+          "Set a timer or reminder for some number of seconds from now. Work "
+          "out the seconds yourself from what the user said. 'label' is what "
+          "it is for, as a short phrase that reads naturally after 'for': "
+          "'the pasta', 'the meeting', 'taking the washing in'. Leave the "
+          "label out for a bare timer.",
+          {"seconds": _INT, "label": _STR}, ["seconds"]),
+    _decl("cancel_timer",
+          "Cancel a running timer. Pass the label of the one to cancel, "
+          "'everything' for all of them, or nothing at all when only one is "
+          "running.",
+          {"which": _STR}, []),
+    _decl("list_timers",
+          "Say what timers are running and how long is left on each. Use this "
+          "for 'how long left', 'what timers do I have', 'is my timer still "
+          "going'.",
+          {}, []),
+    _decl("media_control",
+          "Control whatever is currently playing - Spotify, YouTube, a video, "
+          "anything at all. Use this for play, pause, resume, skip, next "
+          "song, previous song, or stop.",
+          {"action": types.Schema(
+              type=types.Type.STRING,
+              enum=sorted(actions.MEDIA_KEYS))}, ["action"]),
+    _decl("read_clipboard",
+          "Read out what the user has copied to the clipboard, word for word. "
+          "Use this for 'what's on my clipboard' or 'read me what I copied'. "
+          "To do something with it instead, use answer_about_clipboard.",
+          {}, []),
+    _decl("copy_to_clipboard",
+          "Put some text on the user's clipboard so they can paste it.",
+          {"text": _STR}, ["text"]),
+    _decl("answer_about_clipboard",
+          "Answer a question about what the user has copied, or transform it: "
+          "translate this, summarize what I copied, explain this error, what "
+          "does this mean. Pass the question they asked.",
+          {"question": _STR}, ["question"]),
     _decl("type_text", "Type the given text into whatever window currently has focus.",
           {"text": _STR}, ["text"]),
     _decl("system_control",
           "Control the system. 'action' is one of: volume_up, volume_down, mute, "
-          "lock, sleep, shutdown, restart, cancel_shutdown, screenshot.",
+          "lock, sleep, shutdown, restart, cancel_shutdown, paste, screenshot.",
           {"action": types.Schema(
               type=types.Type.STRING,
               enum=["volume_up", "volume_down", "mute", "lock", "sleep",
-                    "shutdown", "restart", "cancel_shutdown", "screenshot"])},
+                    "shutdown", "restart", "cancel_shutdown", "paste",
+                    "screenshot"])},
           ["action"]),
     _decl("quick_control",
           "Screen, sound and window controls, through the user's Quick Control "
@@ -139,6 +193,13 @@ DISPATCH = {
     "look_at_screen": lambda i: lookup.look_at_screen(i["question"]),
     "remember": lambda i: memory.remember(i["fact"]),
     "forget": lambda i: memory.forget(i["about"]),
+    "set_timer": lambda i: timers.add(i["seconds"], i.get("label", "")),
+    "cancel_timer": lambda i: timers.cancel(i.get("which", "")),
+    "list_timers": lambda i: timers.describe(),
+    "media_control": lambda i: actions.media_control(i["action"]),
+    "read_clipboard": lambda i: clipboard.read_aloud(),
+    "copy_to_clipboard": lambda i: clipboard.write(i["text"]),
+    "answer_about_clipboard": lambda i: lookup.answer_about_clipboard(i["question"]),
     "type_text": lambda i: actions.type_text(i["text"]),
     "system_control": lambda i: actions.system_control(i["action"]),
     "quick_control": lambda i: actions.quick_control(
@@ -198,9 +259,12 @@ class Brain:
     @property
     def _config(self) -> types.GenerateContentConfig:
         """Built per request, so a fact remembered a moment ago is already in
-        the prompt on the very next turn."""
+        the prompt on the very next turn - and so the clock in it is the real
+        one, which is what makes "remind me at six" land at six."""
+        now = datetime.now().strftime("%A %d %B %Y, %H:%M")
         return types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT + memory.as_prompt(),
+            system_instruction=(SYSTEM_PROMPT + memory.as_prompt()
+                                + f"\n\nThe current local time is {now}."),
             max_output_tokens=config["max_tokens"],
             tools=self._tools,
             # We run the tool loop ourselves so we can execute real actions.

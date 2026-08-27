@@ -57,6 +57,25 @@ def _tap(key: str, spoken: str, times: int = 5) -> str:
     return spoken
 
 
+# Media keys. Every media player on Windows listens to these, so this works
+# for Spotify, YouTube in a browser, VLC and anything else, without knowing
+# which of them is playing.
+MEDIA_KEYS = {
+    "play_pause": ("playpause", "Toggled playback."),
+    "next_track": ("nexttrack", "Next track."),
+    "previous_track": ("prevtrack", "Previous track."),
+    "stop": ("stop", "Stopped playback."),
+}
+
+
+def media_control(action: str) -> str:
+    """Play/pause, skip or stop whatever is playing."""
+    key = MEDIA_KEYS.get(action.strip().lower().replace(" ", "_"))
+    if key is None:
+        return f"I don't know the media action '{action}'."
+    return _tap(key[0], key[1], times=1)
+
+
 def open_app(name: str) -> str:
     """Launch an application by friendly name."""
     key = name.strip().lower()
@@ -159,6 +178,10 @@ def system_control(action: str) -> str:
     if action == "cancel_shutdown":
         os.system("shutdown /a")
         return "Shutdown cancelled."
+    if action == "paste":
+        import clipboard
+
+        return clipboard.paste()
     if action == "screenshot":
         return screenshot()
     return f"I don't know the system action '{action}'."

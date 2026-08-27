@@ -209,15 +209,20 @@ class VoiceEngine:
                 break
 
     # ----- listening -----------------------------------------------------
-    def wait_for_wake(self, is_paused=None, wake_event=None) -> str:
-        """Block until a wake word is heard. Returns the matched text.
+    def wait_for_wake(self, is_paused=None, wake_event=None,
+                      announce_event=None) -> str:
+        """Block until there is a reason to stop waiting. Returns why.
+
+        Normally that is a wake word, and the matched text comes back. The two
+        events are the other ways out: ``wake_event`` is the push-to-talk
+        hotkey ("hotkey"), and ``announce_event`` is Stark having something to
+        say of his own, a timer going off ("announce").
 
         While ``is_paused()`` returns True the mic is drained but never
-        triggers, so Stark stays dormant until listening is resumed.
-
-        ``wake_event`` is the push-to-talk hotkey. It is checked first and
-        honoured even while paused: pausing silences the microphone, but a
-        keypress is unambiguous - the user meant it.
+        triggers, so Stark stays dormant until listening is resumed. Both
+        events are honoured anyway: pausing silences the microphone, but a
+        keypress is unambiguous, and a timer the user set themselves should
+        still go off.
         """
         self._rec = self._make_wake_rec()
         while True:
@@ -225,6 +230,8 @@ class VoiceEngine:
                 wake_event.clear()
                 self._drain()
                 return "hotkey"
+            if announce_event is not None and announce_event.is_set():
+                return "announce"
             try:
                 data = self._q.get(timeout=0.2)
             except queue.Empty:

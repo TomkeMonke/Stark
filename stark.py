@@ -8,9 +8,15 @@ listening, thinking and speaking, and talks to the HUD through Qt signals.
 A turn is not one command: after Stark answers he holds the microphone open for
 a few seconds, so the next thing said needs no wake word. Cutting him off
 mid-sentence does the same thing, immediately.
+
+Timers are the one thing that runs the other way round - Stark speaking without
+having been spoken to. They queue up in the Announcer and interrupt the wait
+for a wake word, but never a conversation in progress: whatever the user is
+in the middle of saying matters more than the pasta.
 """
 from __future__ import annotations
 
+import queue
 import sys
 import threading
 import traceback
@@ -30,6 +36,33 @@ def _setup_logging() -> None:
         log = open(BASE_DIR / "stark.log", "a", encoding="utf-8", buffering=1)
         sys.stdout = log
         sys.stderr = log
+
+
+class Announcer:
+    """Things Stark has to say that nobody asked for just now.
+
+    A timer fires on its own thread, which owns neither the voice nor the HUD.
+    So it leaves the line here and sets the event; the worker picks it up the
+    next time it is between conversations.
+    """
+
+    def __init__(self) -> None:
+        self._lines: queue.Queue = queue.Queue()
+        self.event = threading.Event()
+
+    def say(self, line: str) -> None:
+        self._lines.put(line)
+        self.event.set()
+
+    def take(self) -> list[str]:
+        """Everything queued, cleared in one go."""
+        self.event.clear()
+        out = []
+        while True:
+            try:
+                out.append(self._lines.get_nowait())
+            except queue.Empty:
+                return out
 
 
 class Controller(QObject):
@@ -109,10 +142,27 @@ def conversation(ctrl: Controller, voice, brain, command: str) -> None:
         command = voice.listen_command(open_window_sec=window, on_speech=on_speech)
 
 
+def announce(ctrl: Controller, voice, lines: list[str]) -> None:
+    """Say something unprompted - a timer going off."""
+    if not lines:
+        return
+    ctrl.text.emit("")
+    ctrl.appear.emit()
+    ctrl.state.emit("speaking")
+    if config["timer_chime"]:
+        voice.chime()
+    for line in lines:
+        print(f"[timer] {line}")
+        ctrl.text.emit(line)
+        voice.speak(line)
+    ctrl.vanish.emit()
+
+
 def worker(ctrl: Controller, paused: threading.Event,
-           wake_event: threading.Event) -> None:
+           wake_event: threading.Event, announcer: Announcer) -> None:
     """Listen -> think -> speak, forever."""
     # Heavy imports happen here so the HUD/Qt can start instantly.
+    import timers
     from voice import VoiceEngine
     from brain import Brain
 
@@ -132,9 +182,17 @@ def worker(ctrl: Controller, paused: threading.Event,
         print('[stark] online. Say "Hey Stark".')
         voice.speak("Stark online.")
 
+    # Anything that came due while Stark was closed is announced from here.
+    timers.start(announcer.say)
+
     while True:
         try:
-            voice.wait_for_wake(is_paused=paused.is_set, wake_event=wake_event)
+            why = voice.wait_for_wake(is_paused=paused.is_set,
+                                      wake_event=wake_event,
+                                      announce_event=announcer.event)
+            if why == "announce":
+                announce(ctrl, voice, announcer.take())
+                continue
             ctrl.text.emit("")
             ctrl.state.emit("listening")
             ctrl.appear.emit()
@@ -189,6 +247,7 @@ def main() -> int:
     # hotkey has to happen on the GUI thread - that's whose message queue
     # Windows posts WM_HOTKEY to.
     wake_event = threading.Event()
+    announcer = Announcer()
     hotkey_label = ""
     if config["hotkey_enabled"]:
         import hotkey
@@ -209,7 +268,7 @@ def main() -> int:
     app._tray = tray  # keep a reference alive
 
     threading.Thread(
-        target=worker, args=(ctrl, paused, wake_event), daemon=True
+        target=worker, args=(ctrl, paused, wake_event, announcer), daemon=True
     ).start()
 
     return app.exec()

@@ -1,8 +1,9 @@
-"""The two questions Stark can't answer from the conversation alone.
+"""The questions Stark can't answer from the conversation alone.
 
-Both go back to Gemini with something extra attached - a picture of the screen,
-or Google Search grounding - and both return a finished sentence for Stark to
-say out loud, the same contract every other action has.
+Each goes back to Gemini with something extra attached - a picture of the
+screen, Google Search grounding, or whatever the user has copied - and each
+returns a finished sentence for Stark to say out loud, the same contract every
+other action has.
 
 Each of these costs a *second* API request for that command, unlike everything
 else Stark does. That is the price of the image and of grounded search, and it
@@ -76,6 +77,36 @@ def look_at_screen(question: str) -> str:
     except Exception as exc:
         return f"I couldn't make sense of the screen, sir. {_reason(exc)}"
     return _spoken(resp) or "I'm not sure what I'm looking at, sir."
+
+
+def answer_about_clipboard(question: str) -> str:
+    """Do something with what the user copied: translate it, summarize it,
+    explain it. Reading it back verbatim needs no model - that's
+    clipboard.read_aloud, and it costs nothing."""
+    import clipboard
+
+    raw = clipboard.text()
+    if not raw.strip():
+        return "There's nothing on your clipboard, sir."
+
+    ask = question.strip() or "What is this?"
+    try:
+        resp = _gemini().models.generate_content(
+            # Plain text and no search, so neither of the overrides applies.
+            model=config["gemini_model"],
+            contents=[types.Content(role="user", parts=[
+                types.Part(text="The user has this on their clipboard:\n\n"
+                                + raw[:clipboard.MAX_MODEL_CHARS]),
+                types.Part(text=ask),
+            ])],
+            config=types.GenerateContentConfig(
+                system_instruction=SPOKEN_STYLE,
+                max_output_tokens=config["max_tokens"],
+            ),
+        )
+    except Exception as exc:
+        return f"I couldn't work with that, sir. {_reason(exc)}"
+    return _spoken(resp) or "I'm not sure what to make of that, sir."
 
 
 def answer_from_web(question: str) -> str:

@@ -82,6 +82,13 @@ DEFAULTS = {
     # rest, instead of waiting for the whole reply. Turn it off to go back to
     # one request, one finished answer, one clip.
     "stream_speech": True,
+    # Timers and reminders. A timer goes off whatever else is happening - the
+    # one thing Stark says without being asked - and one that came due while he
+    # was closed is announced at the next start, with how late it is.
+    "timer_chime": True,           # ping before a timer announcement
+    # How much of the clipboard to read back before cutting it short. Anything
+    # longer is a wall of text nobody wants read to them.
+    "clipboard_speak_chars": 400,
     # Push-to-talk: wake Stark without saying his name. Works while paused.
     "hotkey_enabled": True,
     "hotkey": "ctrl+alt+s",
