@@ -51,6 +51,23 @@ DEFAULTS = {
     # Listening behaviour
     "command_timeout_sec": 8.0,    # max length of a single spoken command
     "command_silence_sec": 1.0,    # silence that ends a command
+    # Follow-ups: after Stark answers, the mic stays open briefly so the next
+    # command needs no wake word. Set the window to 0 to turn this off.
+    "followup_enabled": True,
+    "followup_window_sec": 7.0,
+    # Barge-in: cut Stark off mid-sentence by saying one of these. Words that
+    # appear in what he is currently saying are ignored, so he can't interrupt
+    # himself. Needs a neural voice (edge/elevenlabs); the offline SAPI
+    # fallback can't be stopped part-way.
+    "barge_in": True,
+    "barge_words": ["stop", "stark", "cancel", "quiet", "enough", "wait"],
+    # Start speaking the first sentence while the model is still writing the
+    # rest, instead of waiting for the whole reply. Turn it off to go back to
+    # one request, one finished answer, one clip.
+    "stream_speech": True,
+    # Push-to-talk: wake Stark without saying his name. Works while paused.
+    "hotkey_enabled": True,
+    "hotkey": "ctrl+alt+s",
     # HUD
     "hud_size": 460,
     # Quick Control — the pop-up settings panel Stark drives for screen and

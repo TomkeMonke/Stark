@@ -7,6 +7,9 @@ tier — get a key at https://aistudio.google.com/apikey
 """
 from __future__ import annotations
 
+import re
+from typing import Iterator
+
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
@@ -104,6 +107,42 @@ DISPATCH = {
 }
 
 
+# A sentence ends at punctuation followed by space.
+#
+# How much to release at a time is a measured trade-off, not a guess. The voice
+# service takes about the same time to synthesize a clip whatever its length,
+# and pads every clip with roughly a second of silence at each end -- so each
+# extra split buys nothing and costs about a second of dead air mid-reply.
+# Only the first sentence is worth rushing out, because that is the one the
+# user is sitting waiting for; after that, prefer fewer and longer clips.
+_BOUNDARY = re.compile(r"[.!?]+[\"')\]]*\s+")
+FIRST_CHUNK_CHARS = 15
+CHUNK_CHARS = 120
+
+
+def _take_sentences(buf: str, minimum: int) -> tuple[list[str], str]:
+    """Split off whatever is complete enough to speak. Returns (chunks, rest).
+
+    Sentences shorter than ``minimum`` are held back and merged into the next
+    one rather than becoming a clip of their own.
+    """
+    chunks, start = [], 0
+    for m in _BOUNDARY.finditer(buf):
+        if m.end() - start >= minimum:
+            chunks.append(buf[start:m.end()].strip())
+            start = m.end()
+    return chunks, buf[start:]
+
+
+def _parts(resp) -> list:
+    """The parts of a streamed chunk, which can legitimately be empty."""
+    candidates = getattr(resp, "candidates", None) or []
+    if not candidates:
+        return []
+    content = getattr(candidates[0], "content", None)
+    return list(getattr(content, "parts", None) or []) if content else []
+
+
 class Brain:
     def __init__(self) -> None:
         if not config.api_key:
@@ -142,10 +181,7 @@ class Brain:
             )
         except genai_errors.ClientError as exc:
             self.history.pop()  # don't keep the un-answered turn
-            if getattr(exc, "code", None) == 429:
-                return ("I've reached my daily request limit on the free tier, "
-                        "sir. It resets shortly.")
-            return f"I'm sorry, sir, the service returned an error: {exc.code}."
+            return self._client_error(exc)
         except Exception as exc:
             self.history.pop()
             return f"I'm sorry, sir, I ran into a problem: {exc}"
@@ -160,6 +196,85 @@ class Brain:
         if not calls:
             return text.strip() or "Done."
 
+        spoken = self._run_calls(calls)
+        reply = (text + " " + " ".join(spoken)).strip() if text else " ".join(spoken)
+        self._remember(reply)
+        return reply or "Done."
+
+    def ask_stream(self, user_text: str) -> Iterator[str]:
+        """Run one turn, handing back each sentence the moment it is written.
+
+        Still a single API request. The point is the ordering: the caller can
+        be speaking the first sentence while Gemini is composing the second,
+        and any acknowledgement ("Right away, sir.") is out loud before the
+        tool it refers to has even run.
+        """
+        self.history.append(
+            types.Content(role="user", parts=[types.Part(text=user_text)])
+        )
+        self.history = self.history[-24:]
+
+        said: list[str] = []
+        calls: list = []
+        buf = ""
+        spoke = False  # once the first sentence is out, batch the rest
+        try:
+            stream = self.client.models.generate_content_stream(
+                model=self.model, contents=self.history, config=self._config
+            )
+            for resp in stream:
+                for part in _parts(resp):
+                    if getattr(part, "text", None):
+                        said.append(part.text)
+                        buf += part.text
+                        ready, buf = _take_sentences(
+                            buf, CHUNK_CHARS if spoke else FIRST_CHUNK_CHARS
+                        )
+                        for chunk in ready:
+                            spoke = True
+                            yield chunk
+                    if getattr(part, "function_call", None):
+                        calls.append(part.function_call)
+        except genai_errors.ClientError as exc:
+            self.history.pop()
+            yield self._client_error(exc)
+            return
+        except Exception as exc:
+            self.history.pop()
+            yield f"I'm sorry, sir, I ran into a problem: {exc}"
+            return
+
+        tail = buf.strip()
+        if tail:
+            yield tail
+
+        text = "".join(said).strip()
+        parts = ([types.Part(text=text)] if text else []) + [
+            types.Part(function_call=fc) for fc in calls
+        ]
+        self.history.append(types.Content(role="model", parts=parts))
+
+        if not calls:
+            if not text:
+                yield "Done."
+            return
+
+        spoken = self._run_calls(calls)
+        for line in spoken:
+            yield line
+        reply = (text + " " + " ".join(spoken)).strip() if text else " ".join(spoken)
+        self._remember(reply)
+
+    # ----- shared bookkeeping -------------------------------------------
+    @staticmethod
+    def _client_error(exc) -> str:
+        if getattr(exc, "code", None) == 429:
+            return ("I've reached my daily request limit on the free tier, "
+                    "sir. It resets shortly.")
+        return f"I'm sorry, sir, the service returned an error: {exc.code}."
+
+    def _run_calls(self, calls) -> list[str]:
+        """Execute the tool calls and record their results in history."""
         results, spoken = [], []
         for fc in calls:
             args = dict(fc.args) if fc.args else {}
@@ -173,11 +288,12 @@ class Brain:
                     name=fc.name, response={"result": out}
                 )
             )
-        # Record the tool results + a synthetic spoken turn so history stays
-        # coherent for follow-ups, without a second API call.
         self.history.append(types.Content(role="user", parts=results))
-        reply = (text + " " + " ".join(spoken)).strip() if text else " ".join(spoken)
+        return spoken
+
+    def _remember(self, reply: str) -> None:
+        """Record what was actually said, so a follow-up has the context -
+        without spending a second request just to phrase a confirmation."""
         self.history.append(
             types.Content(role="model", parts=[types.Part(text=reply)])
         )
-        return reply or "Done."

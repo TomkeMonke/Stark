@@ -49,10 +49,20 @@ def make_reactor_icon(size: int = 64) -> QIcon:
     return QIcon(pm)
 
 
-def create_tray(app, on_quit, on_toggle_pause=None, start_paused=False) -> QSystemTrayIcon:
+def create_tray(app, on_quit, on_toggle_pause=None, start_paused=False,
+                on_listen_now=None, hotkey_label="") -> QSystemTrayIcon:
     tray = QSystemTrayIcon(make_reactor_icon(), parent=app)
 
     menu = QMenu()
+
+    if on_listen_now is not None:
+        # Same door as the push-to-talk hotkey, for when the mic is a bad idea.
+        listen_action = QAction("Listen now", menu)
+        if hotkey_label:
+            listen_action.setText(f"Listen now\t{hotkey_label}")
+        listen_action.triggered.connect(lambda: on_listen_now())
+        menu.addAction(listen_action)
+        menu.addSeparator()
 
     pause_action = QAction("Pause listening", menu)
     pause_action.setCheckable(True)

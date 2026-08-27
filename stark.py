@@ -1,9 +1,13 @@
-"""Stark — a 'Hey Stark' voice assistant with a Jarvis-style HUD.
+"""Stark - a 'Hey Stark' voice assistant with a Jarvis-style HUD.
 
 Run:  .venv\\Scripts\\python.exe stark.py
 
 The Qt event loop + HUD live on the main thread. A background thread does the
 listening, thinking and speaking, and talks to the HUD through Qt signals.
+
+A turn is not one command: after Stark answers he holds the microphone open for
+a few seconds, so the next thing said needs no wake word. Cutting him off
+mid-sentence does the same thing, immediately.
 """
 from __future__ import annotations
 
@@ -33,10 +37,81 @@ class Controller(QObject):
     vanish = Signal()
     state = Signal(str)
     text = Signal(str)
+    followup = Signal(float)
 
 
-def worker(ctrl: Controller, paused: threading.Event) -> None:
-    """Listen → think → speak, forever."""
+def speak_reply(ctrl: Controller, voice, brain, command: str) -> bool:
+    """Answer one command out loud. Returns True if the user cut Stark off.
+
+    When streaming is on, the brain's sentences are piped straight into the
+    voice as they are written, so nothing waits for the full reply.
+    """
+    if not config["stream_speech"]:
+        reply = brain.ask(command)
+        print(f"[stark] {reply}")
+        ctrl.text.emit(reply)
+        ctrl.state.emit("speaking")
+        return voice.speak(reply)
+
+    said: list[str] = []
+
+    def chunks():
+        for piece in brain.ask_stream(command):
+            print(f"[stark] {piece}")
+            said.append(piece)
+            if len(said) == 1:
+                ctrl.state.emit("speaking")
+            ctrl.text.emit(" ".join(said))
+            yield piece
+
+    return voice.speak(chunks())
+
+
+def conversation(ctrl: Controller, voice, brain, command: str) -> None:
+    """Run one exchange and every follow-up that comes out of it.
+
+    Returns once the user has gone quiet - the caller then hides the HUD and
+    goes back to waiting for the wake word.
+    """
+    first = True
+    while True:
+        if not command:
+            if first:  # heard the wake word, then nothing intelligible
+                ctrl.state.emit("speaking")
+                voice.speak("I didn't catch that, sir.")
+            return
+        first = False
+
+        print(f"[you]   {command}")
+        ctrl.text.emit(command)
+        ctrl.state.emit("thinking")
+
+        cut_off = speak_reply(ctrl, voice, brain, command)
+
+        if cut_off:
+            # He was interrupted, so the user is already talking. Don't make
+            # them wait for a countdown - listen straight away.
+            print("[stark] (interrupted)")
+            ctrl.text.emit("")
+            ctrl.state.emit("listening")
+            command = voice.listen_command()
+            continue
+
+        window = float(config["followup_window_sec"])
+        if not config["followup_enabled"] or window <= 0:
+            return
+
+        def on_speech() -> None:
+            ctrl.text.emit("")
+            ctrl.state.emit("listening")
+
+        ctrl.followup.emit(window)
+        command = voice.listen_command(open_window_sec=window, on_speech=on_speech)
+
+
+def worker(ctrl: Controller, paused: threading.Event,
+           wake_event: threading.Event) -> None:
+    """Listen -> think -> speak, forever."""
     # Heavy imports happen here so the HUD/Qt can start instantly.
     from voice import VoiceEngine
     from brain import Brain
@@ -52,37 +127,20 @@ def worker(ctrl: Controller, paused: threading.Event) -> None:
         return
 
     if paused.is_set():
-        print("[stark] started paused — listening is off. Resume it from the tray.")
+        print("[stark] started paused - listening is off. Resume it from the tray.")
     else:
         print('[stark] online. Say "Hey Stark".')
         voice.speak("Stark online.")
 
     while True:
         try:
-            voice.wait_for_wake(is_paused=paused.is_set)
+            voice.wait_for_wake(is_paused=paused.is_set, wake_event=wake_event)
             ctrl.text.emit("")
             ctrl.state.emit("listening")
             ctrl.appear.emit()
             voice.chime()  # let the user know Stark heard them
 
-            command = voice.listen_command()
-            if not command:
-                ctrl.state.emit("speaking")
-                voice.speak("I didn't catch that, sir.")
-                ctrl.vanish.emit()
-                continue
-
-            print(f"[you]   {command}")
-            ctrl.text.emit(command)
-            ctrl.state.emit("thinking")
-
-            reply = brain.ask(command)
-            print(f"[stark] {reply}")
-
-            ctrl.text.emit(reply)
-            ctrl.state.emit("speaking")
-            voice.speak(reply)
-
+            conversation(ctrl, voice, brain, voice.listen_command())
             ctrl.vanish.emit()
         except Exception as exc:
             print(f"[stark] error: {exc}")
@@ -113,6 +171,7 @@ def main() -> int:
     ctrl.vanish.connect(hud.vanish, Qt.QueuedConnection)
     ctrl.state.connect(hud.set_state, Qt.QueuedConnection)
     ctrl.text.connect(hud.set_text, Qt.QueuedConnection)
+    ctrl.followup.connect(hud.start_followup, Qt.QueuedConnection)
 
     # Shared flag: when set, the worker stays dormant and ignores the mic.
     # The last state is remembered in config.json across restarts.
@@ -126,13 +185,32 @@ def main() -> int:
         config.data["paused"] = is_paused
         config.save()
 
+    # Push-to-talk: summon Stark without saying his name. Registering the
+    # hotkey has to happen on the GUI thread - that's whose message queue
+    # Windows posts WM_HOTKEY to.
+    wake_event = threading.Event()
+    hotkey_label = ""
+    if config["hotkey_enabled"]:
+        import hotkey
+
+        spec = config["hotkey"]
+        if hotkey.install(app, spec, wake_event.set):
+            hotkey_label = hotkey.pretty(spec)
+        app.aboutToQuit.connect(hotkey.remove)
+
     # System-tray icon so Stark can be paused or quit when running windowless.
     tray = create_tray(
-        app, app.quit, on_toggle_pause=toggle_pause, start_paused=start_paused
+        app, app.quit,
+        on_toggle_pause=toggle_pause,
+        start_paused=start_paused,
+        on_listen_now=wake_event.set,
+        hotkey_label=hotkey_label,
     )
     app._tray = tray  # keep a reference alive
 
-    threading.Thread(target=worker, args=(ctrl, paused), daemon=True).start()
+    threading.Thread(
+        target=worker, args=(ctrl, paused, wake_event), daemon=True
+    ).start()
 
     return app.exec()
 

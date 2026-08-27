@@ -7,6 +7,7 @@ tick marks and a pulsing core. Colour and speed change with Stark's state.
 from __future__ import annotations
 
 import math
+import time
 
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, Property, QRectF, Slot, QPointF,
@@ -16,11 +17,13 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QWidget
 
-# State -> accent colour (Jarvis cyan, amber while thinking, bright while talking)
+# State -> accent colour (Jarvis cyan, amber while thinking, bright while talking,
+# a cooler muted cyan while holding the mic open for a follow-up)
 STATE_COLORS = {
     "listening": QColor(45, 212, 238),
     "thinking": QColor(255, 176, 59),
     "speaking": QColor(120, 230, 255),
+    "followup": QColor(58, 156, 180),
     "idle": QColor(45, 212, 238),
 }
 
@@ -43,6 +46,10 @@ class Hud(QWidget):
         self._angle = 0.0
         self._pulse = 0.0
         self._text = ""
+        # While a follow-up window is open, the outer ring drains away to show
+        # how long is left to speak without saying the wake word again.
+        self._followup_len = 0.0
+        self._followup_start = 0.0
 
         self._anim_timer = QTimer(self)
         self._anim_timer.timeout.connect(self._tick)
@@ -66,7 +73,17 @@ class Hud(QWidget):
     # ----- public slots (called via signals from the worker thread) ------
     @Slot(str)
     def set_state(self, state: str) -> None:
+        if state != "followup":
+            self._followup_len = 0.0
         self._state = state
+        self.update()
+
+    @Slot(float)
+    def start_followup(self, seconds: float) -> None:
+        """Hold the HUD open with a draining ring for the follow-up window."""
+        self._followup_len = max(0.0, seconds)
+        self._followup_start = time.monotonic()
+        self._state = "followup"
         self.update()
 
     @Slot(str)
@@ -100,7 +117,8 @@ class Hud(QWidget):
 
     # ----- animation -----------------------------------------------------
     def _tick(self) -> None:
-        speed = {"thinking": 4.5, "listening": 1.6, "speaking": 2.6}.get(self._state, 1.2)
+        speed = {"thinking": 4.5, "listening": 1.6, "speaking": 2.6,
+                 "followup": 0.9}.get(self._state, 1.2)
         self._angle = (self._angle + speed) % 360
         self._pulse = (self._pulse + 0.05) % (2 * math.pi)
         self.update()
@@ -186,13 +204,27 @@ class Hud(QWidget):
             )
         p.restore()
 
+        # Follow-up window: a ring that drains clockwise from twelve o'clock,
+        # so the user can see how long they have to just keep talking.
+        if self._state == "followup" and self._followup_len > 0:
+            elapsed = time.monotonic() - self._followup_start
+            left = max(0.0, min(1.0, 1.0 - elapsed / self._followup_len))
+            pen = QPen(QColor(accent.red(), accent.green(), accent.blue(), 235))
+            pen.setWidthF(4.0)
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            rect = QRectF(cx - R * 1.02, cy - R * 1.02, R * 2.04, R * 2.04)
+            p.drawArc(rect, 90 * 16, int(-360 * left * 16))
+
         # Status word in the centre
         p.setPen(QColor(220, 245, 255, 230))
         f = QFont("Consolas", 11)
         f.setLetterSpacing(QFont.AbsoluteSpacing, 3)
         p.setFont(f)
         label = {"listening": "LISTENING", "thinking": "PROCESSING",
-                 "speaking": "STARK", "idle": "STARK"}.get(self._state, "STARK")
+                 "speaking": "STARK", "followup": "GO AHEAD",
+                 "idle": "STARK"}.get(self._state, "STARK")
         p.drawText(QRectF(0, cy - 10, self.width(), 20), Qt.AlignHCenter, label)
 
         # Transcript / reply text below the reactor, on a solid panel
