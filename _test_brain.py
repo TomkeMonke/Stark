@@ -16,6 +16,7 @@ from google.genai import types
 
 import brain as B
 from brain import CHUNK_CHARS, FIRST_CHUNK_CHARS, Brain, _take_sentences
+from config import config
 
 passed = failed = 0
 
@@ -70,6 +71,8 @@ def make_brain(chunks, delay=0.0, error=None) -> Brain:
     b.model = "fake-model"
     b.history = []
     b._tools = []
+    b._local_until = 0.0
+    b._mentioned_local = False
     b.client = pytypes.SimpleNamespace(models=FakeModels(chunks, delay, error))
     return b
 
@@ -226,6 +229,18 @@ def test_empty_reply() -> None:
     check("Stark never returns silence", out == ["Done."], out)
 
 
+def test_ask_returns_one_piece() -> None:
+    print("\nthe non-streaming shape")
+    b = make_brain([chunk("Right away, sir. "), chunk("Chrome is open now.")])
+    said = b.ask("open chrome")
+    check("the whole reply comes back as one string",
+          said == "Right away, sir. Chrome is open now.", said)
+    check("over the same single request", b.client.models.calls == 1)
+
+    b = make_brain([chunk("")])
+    check("and it is never empty", b.ask("...") == "Done.", b.ask("..."))
+
+
 def test_history_bound() -> None:
     print("\nhistory")
     b = make_brain([chunk("Understood, sir, I will keep that in mind. ")])
@@ -236,6 +251,12 @@ def test_history_bound() -> None:
 
 
 def main() -> int:
+    # This suite is about the Gemini path, so the local fallback is turned off
+    # for it - otherwise the error tests would quietly pass through to Ollama
+    # on any machine that happens to be running one. _test_local_brain.py
+    # covers the falling back.
+    config.data["ollama_enabled"] = False
+
     test_take_sentences()
     test_streaming_order()
     test_speaks_before_finishing()
@@ -244,6 +265,7 @@ def main() -> int:
     test_failing_tool()
     test_errors()
     test_empty_reply()
+    test_ask_returns_one_piece()
     test_history_bound()
     print(f"\n{passed} passed, {failed} failed")
     return 1 if failed else 0

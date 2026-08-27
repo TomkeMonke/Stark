@@ -82,6 +82,18 @@ DEFAULTS = {
     # rest, instead of waiting for the whole reply. Turn it off to go back to
     # one request, one finished answer, one clip.
     "stream_speech": True,
+    # The local fallback brain. When Gemini can't answer - daily limit, no
+    # key, no internet - the turn goes to an Ollama server on this machine
+    # instead, if one is running. Nothing is installed for you: without Ollama
+    # this changes nothing. `ollama_only` skips Gemini entirely, which makes
+    # Stark work with no API key at all. After a daily limit he stays on the
+    # local model for `ollama_takeover_min` minutes rather than retrying a
+    # request that is going to fail.
+    "ollama_enabled": True,
+    "ollama_host": "http://localhost:11434",
+    "ollama_model": "llama3.2",
+    "ollama_only": False,
+    "ollama_takeover_min": 30,
     # Timers and reminders. A timer goes off whatever else is happening - the
     # one thing Stark says without being asked - and one that came due while he
     # was closed is announced at the next start, with how late it is.

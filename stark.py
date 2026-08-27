@@ -212,13 +212,22 @@ def worker(ctrl: Controller, paused: threading.Event,
 def main() -> int:
     _setup_logging()
     if not config.api_key:
-        print(
-            "No Gemini API key found.\n"
-            "Get a free key at https://aistudio.google.com/apikey then either\n"
-            "  setx GEMINI_API_KEY \"...\"   (reopen the terminal afterwards)\n"
-            "or add \"gemini_api_key\" to config.json, then restart Stark."
-        )
-        return 1
+        # A local model is a complete substitute for the key, so this is only
+        # fatal when there isn't one of those either.
+        import local_brain
+
+        if local_brain.available():
+            print("[stark] no Gemini key - running on the local model "
+                  f"({config['ollama_model']}).")
+        else:
+            print(
+                "No Gemini API key found.\n"
+                "Get a free key at https://aistudio.google.com/apikey then either\n"
+                '  setx GEMINI_API_KEY "..."   (reopen the terminal afterwards)\n'
+                'or add "gemini_api_key" to config.json, then restart Stark.\n'
+                "Or run Ollama on this machine and Stark will use that instead."
+            )
+            return 1
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

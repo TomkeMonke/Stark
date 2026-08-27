@@ -4,10 +4,17 @@ Uses Gemini function calling. Gemini receives the user's spoken command plus a
 set of tools (open app, open url, web search, system control, type text). It
 either replies conversationally, calls tools, or both. Runs on Gemini's free
 tier - get a key at https://aistudio.google.com/apikey
+
+When Gemini can't answer - the daily free-tier limit, no key, no internet -
+the turn goes to a local model through local_brain instead, if one is running.
+A daily limit puts him on the local model for a while rather than making him
+retry a request that is going to fail; everything else is tried again next
+turn.
 """
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime
 from typing import Iterator
 
@@ -17,10 +24,12 @@ from google.genai import types
 
 import actions
 import clipboard
+import local_brain
 import lookup
 import memory
 import quick_control
 import timers
+import windows
 from config import config
 
 SYSTEM_PROMPT = """You are Stark, a personal AI assistant modeled on J.A.R.V.I.S. \
@@ -49,6 +58,10 @@ date would matter; your own knowledge has a cutoff and theirs doesn't.
 
 You remember things across restarts. Use remember when the user tells you to keep \
 something, and forget when they ask you to drop it.
+
+Windows on screen: use window_control to minimize, maximize, close, snap or \
+switch to one window, named or whichever is in front. Recalling a whole saved \
+arrangement of windows is the other tool - quick_control's layout.
 
 Timers and reminders: set_timer takes a number of seconds, so work out the \
 duration yourself - "quarter of an hour" is 900, and "remind me at six" is the \
@@ -154,6 +167,16 @@ FUNCTION_DECLARATIONS = [
           "translate this, summarize what I copied, explain this error, what "
           "does this mean. Pass the question they asked.",
           {"question": _STR}, ["question"]),
+    _decl("window_control",
+          "Act on one window on screen. 'target' names the window or app "
+          "('chrome', 'vs code'); leave it out for whichever window is in "
+          "front, which is what 'this' means. Use 'list' to say what is open. "
+          "For recalling a whole saved arrangement of windows instead, use "
+          "quick_control with the layout command.",
+          {"action": types.Schema(type=types.Type.STRING,
+                                  enum=sorted(windows.VERBS)),
+           "target": _STR},
+          ["action"]),
     _decl("type_text", "Type the given text into whatever window currently has focus.",
           {"text": _STR}, ["text"]),
     _decl("system_control",
@@ -200,6 +223,7 @@ DISPATCH = {
     "read_clipboard": lambda i: clipboard.read_aloud(),
     "copy_to_clipboard": lambda i: clipboard.write(i["text"]),
     "answer_about_clipboard": lambda i: lookup.answer_about_clipboard(i["question"]),
+    "window_control": lambda i: windows.control(i["action"], i.get("target", "")),
     "type_text": lambda i: actions.type_text(i["text"]),
     "system_control": lambda i: actions.system_control(i["action"]),
     "quick_control": lambda i: actions.quick_control(
@@ -246,25 +270,38 @@ def _parts(resp) -> list:
 
 class Brain:
     def __init__(self) -> None:
-        if not config.api_key:
+        self.client = None
+        if config.api_key:
+            self.client = genai.Client(api_key=config.api_key)
+        elif not local_brain.available():
             raise RuntimeError(
-                "No Gemini API key. Set GEMINI_API_KEY or put 'gemini_api_key' "
-                "in config.json. Get a free key at https://aistudio.google.com/apikey"
+                "No brain to think with. Either set GEMINI_API_KEY (or "
+                "'gemini_api_key' in config.json) - a free key from "
+                "https://aistudio.google.com/apikey - or run Ollama locally "
+                "and Stark will use that instead."
             )
-        self.client = genai.Client(api_key=config.api_key)
         self.model = config["gemini_model"]
         self.history: list[types.Content] = []  # rolling conversation memory
         self._tools = [types.Tool(function_declarations=FUNCTION_DECLARATIONS)]
+        # Set when the daily limit is hit: no point retrying a request that is
+        # going to fail every time until the quota resets.
+        self._local_until = 0.0
+        self._mentioned_local = False
+
+    @property
+    def instruction(self) -> str:
+        """Built per request, so a fact remembered a moment ago is already in
+        the prompt on the very next turn - and so the clock in it is the real
+        one, which is what makes "remind me at six" land at six. The local
+        brain is given the same one."""
+        now = datetime.now().strftime("%A %d %B %Y, %H:%M")
+        return (SYSTEM_PROMPT + memory.as_prompt()
+                + f"\n\nThe current local time is {now}.")
 
     @property
     def _config(self) -> types.GenerateContentConfig:
-        """Built per request, so a fact remembered a moment ago is already in
-        the prompt on the very next turn - and so the clock in it is the real
-        one, which is what makes "remind me at six" land at six."""
-        now = datetime.now().strftime("%A %d %B %Y, %H:%M")
         return types.GenerateContentConfig(
-            system_instruction=(SYSTEM_PROMPT + memory.as_prompt()
-                                + f"\n\nThe current local time is {now}."),
+            system_instruction=self.instruction,
             max_output_tokens=config["max_tokens"],
             tools=self._tools,
             # We run the tool loop ourselves so we can execute real actions.
@@ -274,42 +311,13 @@ class Brain:
         )
 
     def ask(self, user_text: str) -> str:
-        """Run one turn. Executes any tool calls and returns the spoken reply.
+        """Run one turn and return the whole spoken reply in one piece.
 
-        Costs a single API request: Gemini either answers, or returns tool
-        calls which we execute and confirm using the actions' own messages -
-        we don't make a second request just to phrase a confirmation.
+        Same single request as ask_stream, and the same fallback if it fails -
+        this is only the shape of the answer, for when speaking it as it is
+        written has been turned off.
         """
-        self.history.append(
-            types.Content(role="user", parts=[types.Part(text=user_text)])
-        )
-        self.history = self.history[-24:]  # keep memory bounded
-
-        try:
-            resp = self.client.models.generate_content(
-                model=self.model, contents=self.history, config=self._config
-            )
-        except genai_errors.ClientError as exc:
-            self.history.pop()  # don't keep the un-answered turn
-            return self._client_error(exc)
-        except Exception as exc:
-            self.history.pop()
-            return f"I'm sorry, sir, I ran into a problem: {exc}"
-
-        content = resp.candidates[0].content
-        self.history.append(content)
-        parts = content.parts or []
-
-        text = " ".join(p.text.strip() for p in parts if getattr(p, "text", None))
-        calls = [p.function_call for p in parts if p.function_call]
-
-        if not calls:
-            return text.strip() or "Done."
-
-        spoken = self._run_calls(calls)
-        reply = (text + " " + " ".join(spoken)).strip() if text else " ".join(spoken)
-        self._remember(reply)
-        return reply or "Done."
+        return " ".join(self.ask_stream(user_text)).strip() or "Done."
 
     def ask_stream(self, user_text: str) -> Iterator[str]:
         """Run one turn, handing back each sentence the moment it is written.
@@ -323,6 +331,15 @@ class Brain:
             types.Content(role="user", parts=[types.Part(text=user_text)])
         )
         self.history = self.history[-24:]
+
+        if self._prefer_local():
+            if (yield from self._local_turn(mention=False)):
+                return
+            if self.client is None:  # nothing left to try
+                self.history.pop()
+                yield ("I have no brain to think with, sir. There's no Gemini "
+                       "key, and no local model running either.")
+                return
 
         said: list[str] = []
         calls: list = []
@@ -346,10 +363,18 @@ class Brain:
                     if getattr(part, "function_call", None):
                         calls.append(part.function_call)
         except genai_errors.ClientError as exc:
+            if getattr(exc, "code", None) == 429:
+                # Out of requests for the day: stop asking for a while.
+                self._local_until = time.time() + 60 * float(
+                    config["ollama_takeover_min"])
+            if (yield from self._local_turn(mention=True)):
+                return
             self.history.pop()
             yield self._client_error(exc)
             return
         except Exception as exc:
+            if (yield from self._local_turn(mention=True)):
+                return
             self.history.pop()
             yield f"I'm sorry, sir, I ran into a problem: {exc}"
             return
@@ -374,6 +399,39 @@ class Brain:
             yield line
         reply = (text + " " + " ".join(spoken)).strip() if text else " ".join(spoken)
         self._remember(reply)
+
+    # ----- the local fallback --------------------------------------------
+    def _prefer_local(self) -> bool:
+        """Don't even try Gemini: told to use the local model, or there is no
+        key, or the daily limit was hit recently enough to still be hit."""
+        return (self.client is None or config["ollama_only"]
+                or time.time() < self._local_until)
+
+    def _local_turn(self, mention: bool):
+        """Answer this turn on the local model. Yields what to say, and
+        returns True if it managed it - the caller falls through if not.
+
+        The history already ends with the user's turn, which is the point: a
+        fallback halfway through a conversation keeps the thread.
+        """
+        if not local_brain.available():
+            return False
+
+        said: list[str] = []
+        # Worth saying once. The local model is noticeably less capable, and
+        # a user who thinks they are still talking to Gemini will blame Stark.
+        if mention and not self._mentioned_local:
+            self._mentioned_local = True
+            line = "I'm switching to the local model, sir."
+            said.append(line)
+            yield line
+
+        for piece in local_brain.LocalBrain().ask_stream(
+                self.history, self.instruction):
+            said.append(piece)
+            yield piece
+        self._remember(" ".join(said).strip() or "Done.")
+        return True
 
     # ----- shared bookkeeping -------------------------------------------
     @staticmethod
