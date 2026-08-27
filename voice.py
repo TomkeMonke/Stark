@@ -42,6 +42,9 @@ BLOCK = 8000
 # Don't act on a barge word in the first moments of a clip: that's usually the
 # tail of the previous one still echoing back off the speakers.
 BARGE_GRACE_SEC = 0.35
+# How much audio from before Vosk noticed speech to keep for Whisper.
+LEAD_IN_SEC = 1.5
+LEAD_IN_BYTES = int(SAMPLE_RATE * 2 * LEAD_IN_SEC)  # 16-bit mono
 
 _WORDS = re.compile(r"[a-z']+")
 
@@ -101,8 +104,42 @@ class VoiceEngine:
         self._build_wake_matching()
         self._build_barge_matching()
 
+        # Whisper transcribes commands; it loads in the background so startup
+        # isn't held up, and the first command waits for it if it has to.
+        self._whisper = None
+        self._whisper_ready = threading.Event()
+        if config["stt_engine"] == "whisper":
+            threading.Thread(target=self._load_whisper, daemon=True).start()
+        else:
+            self._whisper_ready.set()
+
         # Lazy TTS init so a missing voice doesn't block startup.
         self._tts = None
+
+    def _load_whisper(self) -> None:
+        try:
+            import warnings
+
+            with warnings.catch_warnings():
+                # ctranslate2 4.6 still imports pkg_resources and says so loudly;
+                # stark.log is the only diagnostic when running windowless, so
+                # keep it for things that matter.
+                warnings.filterwarnings("ignore", message=".*pkg_resources.*")
+                from faster_whisper import WhisperModel
+
+            self._whisper = WhisperModel(
+                config["whisper_model"],
+                device=config["whisper_device"],
+                compute_type=config["whisper_compute"],
+            )
+            print(f"[voice] whisper {config['whisper_model']} ready")
+        except Exception as exc:
+            # Not fatal: Vosk is already transcribing for the endpointing, so
+            # Stark falls back to its transcript rather than going deaf.
+            print(f"[voice] whisper unavailable ({exc}); using Vosk for commands.")
+            self._whisper = None
+        finally:
+            self._whisper_ready.set()
 
     # ----- wake-word setup ----------------------------------------------
     def _build_wake_matching(self) -> None:
@@ -150,10 +187,13 @@ class VoiceEngine:
         The wake recogniser hands over the instant it hears the name, so the
         command recogniser often catches it again - and in a follow-up the user
         may say it out of habit. Either way the brain shouldn't see it.
+
+        Whisper punctuates ("Stark, open Notepad."), so strip that before
+        matching or the leading word never compares equal.
         """
         words = text.split()
         i = 0
-        while i < len(words) and words[i].lower().strip(",") in self._wake_prefix:
+        while i < len(words) and words[i].lower().strip(",.!?;:") in self._wake_prefix:
             i += 1
         return " ".join(words[i:]) if i < len(words) else text
 
@@ -213,6 +253,9 @@ class VoiceEngine:
 
         ``on_speech`` fires the moment the first word lands, which is what the
         HUD uses to drop its follow-up countdown.
+
+        Vosk runs throughout to decide *when* the command starts and stops. The
+        raw audio is kept as it goes by, so Whisper can then say what it was.
         """
         self._drain()
         self._rec = KaldiRecognizer(self._model, SAMPLE_RATE)
@@ -224,6 +267,13 @@ class VoiceEngine:
         speech_start = None
         last_change = start
         last_partial = ""
+        captured: list[bytes] = []
+        buffered = 0  # bytes currently held in `captured`
+
+        def finish(vosk_text: str) -> str:
+            """Whisper's reading of the audio, or Vosk's if it has none."""
+            heard = self._transcribe(b"".join(captured)) or vosk_text
+            return self._strip_wake_prefix(heard) if heard else ""
 
         while True:
             try:
@@ -233,10 +283,12 @@ class VoiceEngine:
             now = time.monotonic()
 
             if data is not None:
+                captured.append(data)
+                buffered += len(data)
                 if self._rec.AcceptWaveform(data):
                     final = json.loads(self._rec.Result()).get("text", "").strip()
                     if final:  # Vosk found the end of the utterance itself
-                        return self._strip_wake_prefix(final)
+                        return finish(final)
                     last_partial = ""
                 else:
                     partial = json.loads(
@@ -254,11 +306,38 @@ class VoiceEngine:
             if speech_start is None:
                 if now - start > window:
                     return ""
+                # Don't hand Whisper a whole window of silence, but do keep the
+                # last second and a half of it. Vosk reports a word only once it
+                # is confident, by which time the opening syllable is well past
+                # - trim any tighter and "open Chrome" arrives as "Chrome".
+                while buffered > LEAD_IN_BYTES and len(captured) > 1:
+                    buffered -= len(captured.pop(0))
                 continue
 
             if now - last_change > silence or now - speech_start > timeout:
-                final = json.loads(self._rec.FinalResult()).get("text", "").strip()
-                return self._strip_wake_prefix(final) if final else ""
+                return finish(json.loads(self._rec.FinalResult()).get("text", "").strip())
+
+    def _transcribe(self, raw: bytes) -> str:
+        """Whisper's transcript of one utterance, or "" to fall back to Vosk."""
+        if not raw or config["stt_engine"] != "whisper":
+            return ""
+        # Only the first command can ever wait here, and only if it arrives
+        # before the model has finished loading.
+        self._whisper_ready.wait(timeout=30)
+        if self._whisper is None:
+            return ""
+        try:
+            import numpy as np
+
+            audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            segments, _ = self._whisper.transcribe(
+                audio, language="en", beam_size=1, vad_filter=False,
+                condition_on_previous_text=False,
+            )
+            return " ".join(s.text for s in segments).strip()
+        except Exception as exc:
+            print(f"[voice] whisper failed ({exc}); using Vosk's transcript.")
+            return ""
 
     # ----- speaking ------------------------------------------------------
     def speak(self, text) -> bool:

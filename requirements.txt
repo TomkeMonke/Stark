@@ -1,6 +1,12 @@
 # Stark - voice assistant dependencies
 google-genai>=0.3.0    # Google Gemini API (the "brain" - free tier)
-vosk>=0.3.45           # offline speech-to-text + wake word
+vosk>=0.3.45           # offline wake word + endpointing (when you start/stop)
+faster-whisper>=1.2.0  # offline command transcription (what you actually said)
+# ctranslate2 is faster-whisper's engine. Pinned deliberately: 4.7 looks for
+# ROCm paths that don't exist on a Windows CPU box, and 4.8 segfaults on model
+# load. 4.6 still imports pkg_resources, which setuptools dropped in 81.
+ctranslate2==4.6.0
+setuptools<81
 sounddevice>=0.4.6     # microphone capture
 pyttsx3>=2.90          # offline text-to-speech fallback
 edge-tts>=6.1.0        # free British neural voice (default Jarvis voice)

@@ -157,6 +157,48 @@ def test_command_capture(engine: VoiceEngine) -> None:
           repr(heard))
 
 
+def test_whisper(engine: VoiceEngine) -> None:
+    print("\nwhisper vs vosk on the commands vosk gets wrong")
+    engine._whisper_ready.wait(60)
+    if engine._whisper is None:
+        check("whisper is available", False, "model failed to load")
+        return
+
+    # Two phrases the small Vosk model reliably mangles: it hears "said the
+    # brightness" and "a range my windows". Whisper gets both right.
+    for phrase, want in (("set the brightness to forty", "brightness"),
+                         ("arrange my windows for coding", "arrange")):
+        config.data["stt_engine"] = "whisper"
+        engine._drain()
+        feeder = feed_live(engine, pcm(phrase) + silence(2.0))
+        heard = engine.listen_command()
+        feeder.join()
+        print(f"    whisper: {heard!r}")
+        check(f"whisper hears {want!r} in {phrase!r}", want in heard.lower(),
+              repr(heard))
+
+    # The lead-in buffer matters: Vosk only reports a word once it is sure, so
+    # without it Whisper is handed audio that starts mid-word.
+    config.data["stt_engine"] = "whisper"
+    engine._drain()
+    feeder = feed_live(engine, pcm("open chrome") + silence(2.0))
+    heard = engine.listen_command()
+    feeder.join()
+    check("the first word is not clipped off", heard.lower().startswith("open"),
+          repr(heard))
+
+    # Turning it off falls back to Vosk rather than going deaf.
+    config.data["stt_engine"] = "vosk"
+    check("with whisper off, nothing is transcribed by it",
+          engine._transcribe(pcm("open chrome")) == "")
+    engine._drain()
+    feeder = feed_live(engine, pcm("open chrome") + silence(2.0))
+    heard = engine.listen_command()
+    feeder.join()
+    check("and Vosk still answers", "chrome" in heard.lower(), repr(heard))
+    config.data["stt_engine"] = "whisper"
+
+
 def test_followup_window(engine: VoiceEngine) -> None:
     print("\nfollow-up window")
     engine._drain()
@@ -252,6 +294,7 @@ def main() -> int:
     test_wake_prefix(engine)
     test_barge_suppression(engine)
     test_command_capture(engine)
+    test_whisper(engine)
     test_followup_window(engine)
     test_barge_detection(engine)
     engine.close()

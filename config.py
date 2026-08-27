@@ -25,6 +25,12 @@ DEFAULTS = {
     "gemini_api_key": "",
     "gemini_model": "gemini-2.5-flash-lite",  # much higher free-tier daily quota
     "max_tokens": 1024,
+    # Looking at the screen and answering from a live web search each cost a
+    # SECOND request for that command. Blank means "use gemini_model"; set one
+    # to a stronger model if you want better eyes or better answers and can
+    # spare the quota.
+    "vision_model": "",
+    "search_model": "",
     # Wake word - any of these phrases activates Stark.
     "wake_words": ["stark", "hey stark", "hi stark", "okay stark"],
     # Extra words that count as the wake word (common Vosk mishearings of
@@ -51,6 +57,17 @@ DEFAULTS = {
     # Listening behaviour
     "command_timeout_sec": 8.0,    # max length of a single spoken command
     "command_silence_sec": 1.0,    # silence that ends a command
+    # Who transcribes the command. Vosk always does the wake word - it is
+    # always-on and its restricted grammar is very good at one known phrase.
+    # Free-form commands are another matter ("arrange my windows" comes back as
+    # "a range my windows"), so by default Whisper transcribes those: Vosk still
+    # decides when you started and stopped talking, Whisper decides what you
+    # said. Costs about 0.6s after you stop speaking, and a ~145 MB model
+    # downloaded on first use. Set to "vosk" for instant, rougher transcription.
+    "stt_engine": "whisper",
+    "whisper_model": "base.en",   # tiny.en is faster, small.en is better
+    "whisper_compute": "int8",
+    "whisper_device": "cpu",
     # Follow-ups: after Stark answers, the mic stays open briefly so the next
     # command needs no wake word. Set the window to 0 to turn this off.
     "followup_enabled": True,
