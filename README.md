@@ -8,7 +8,7 @@ replies out loud.
 It holds a conversation rather than taking one order at a time:
 
 - **Follow-ups.** After he answers, the microphone stays open for a few seconds
-  — a draining ring on the HUD shows how long — so the next thing you say needs
+  (a draining ring on the HUD shows how long), so the next thing you say needs
   no wake word. "Open Chrome" … "now search for the weather".
 - **Interrupt him.** Say "stop" (or "stark", "cancel", "quiet", "enough",
   "wait") while he's talking and he stops mid-sentence and listens. Words he is
@@ -16,7 +16,7 @@ It holds a conversation rather than taking one order at a time:
 - **He starts talking sooner.** The first sentence is spoken while Gemini is
   still writing the rest, so an acknowledgement is out loud before the action it
   refers to has even run.
-- **Push-to-talk.** `Ctrl+Alt+S` wakes him without saying his name — handy in a
+- **Push-to-talk.** `Ctrl+Alt+S` wakes him without saying his name - handy in a
   loud room, or on a call. It works even while listening is paused.
 
 ## How it works
@@ -104,10 +104,10 @@ Edit `config.json` (created from defaults — see `config.py`):
 - `command_timeout_sec` / `command_silence_sec` — how long it listens.
 - **Conversation:** `followup_enabled` and `followup_window_sec` (default 7)
   control the no-wake-word window; set the window to `0` to turn follow-ups off.
-- **Interrupting:** `barge_in` on/off, and `barge_words` — the words that cut
+- **Interrupting:** `barge_in` on/off, and `barge_words` - the words that cut
   him off. Barge-in needs a neural voice; the offline SAPI fallback can't be
   stopped part-way. If your speakers bleed badly into the mic, set it to `false`.
-- `stream_speech` — start speaking sentence one while the model writes the rest.
+- `stream_speech` - start speaking sentence one while the model writes the rest.
   Off means one finished answer, one clip.
 - **Push-to-talk:** `hotkey_enabled` and `hotkey` (default `ctrl+alt+s`). If
   another app already owns the combination, Stark says so in the log and carries
@@ -124,7 +124,7 @@ there. For no console window, point the shortcut at:
 
 ## Tests
 
-No microphone, no API key and no sound needed — test speech is synthesized with
+No microphone, no API key and no sound needed - test speech is synthesized with
 the same voice Stark speaks with and fed straight into the recogniser, and the
 brain runs against a stubbed client.
 
