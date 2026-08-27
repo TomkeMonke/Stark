@@ -5,7 +5,7 @@
 __pycache__/
 *.pyc
 
-# Vosk speech model — ~68 MB, downloaded automatically on first run
+# Vosk speech model - ~68 MB, downloaded automatically on first run
 models/
 
 # Secrets: the Gemini / ElevenLabs keys live here (or in env vars)
@@ -14,6 +14,9 @@ config.json
 
 # Facts the user asked Stark to remember - personal, not shared
 memory.json
+
+# Timers still running - local state, not shared
+timers.json
 
 # Spoken-command transcripts
 stark.log

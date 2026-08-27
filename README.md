@@ -29,6 +29,18 @@ And he is no longer limited to what he already knew:
 - **He remembers.** "Remember I park in level B2" sticks across restarts, and
   "forget about the car" drops it again.
 
+And he keeps working while you do:
+
+- **Timers and reminders.** "Set a timer for ten minutes for the pasta",
+  "remind me in an hour to call the dentist". They go off out loud whatever
+  you are doing, they survive a restart, and one that came due while Stark was
+  closed is announced the moment he is back, with how late it is.
+- **Media keys.** "Pause", "skip this one", "previous song" - it drives
+  whatever is playing, Spotify or a video in a tab, without needing to know
+  which.
+- **The clipboard.** "What's on my clipboard", "copy that address down",
+  "translate what I copied", "paste it".
+
 ## How it works
 
 | Piece | Tech |
@@ -82,6 +94,10 @@ speak. Example commands:
 - "What's on my screen?" · "Read me this error"
 - "What's the weather in Warsaw?" · "Who won the match last night?"
 - "Remember that I park in level B2" · "What do you know about me?"
+- "Set a timer for ten minutes" · "How long is left?" · "Cancel the timer"
+- "Remind me in an hour to call the dentist"
+- "Pause" · "Next song" · "Previous track"
+- "What's on my clipboard?" · "Translate what I copied"
 
 ## Screen & sound: the Quick Control panel
 
@@ -126,7 +142,13 @@ Edit `config.json` (created from defaults - see `config.py`):
   deaf.
 - **Second-request tools:** `vision_model` and `search_model` override which
   model looks at the screen and which answers from the web. Blank means
-  `gemini_model`. Both of those tools cost one extra request for that command.
+  `gemini_model`. Looking at the screen, answering from the web and doing
+  something with the clipboard each cost one extra request for that command.
+- **Timers:** `timer_chime` - a ping before a timer speaks, so an announcement
+  out of nowhere doesn't startle you.
+- `clipboard_speak_chars` - how much of the clipboard to read back before
+  cutting it short (default 400; anything longer is a wall of text nobody
+  wants read to them).
 - **Conversation:** `followup_enabled` and `followup_window_sec` (default 7)
   control the no-wake-word window; set the window to `0` to turn follow-ups off.
 - **Interrupting:** `barge_in` on/off, and `barge_words` - the words that cut
@@ -157,7 +179,8 @@ brain runs against a stubbed client.
 .\.venv\Scripts\python.exe _test_voice.py    # wake, listening, barge-in, speech
 .\.venv\Scripts\python.exe _test_brain.py    # streaming, tool calls, errors
 .\.venv\Scripts\python.exe _test_flow.py     # follow-ups and interruptions
-.\.venv\Scripts\python.exe _test_tools.py    # memory, screen, web lookups
+.\.venv\Scripts\python.exe _test_tools.py    # memory, screen, web, clipboard
+.\.venv\Scripts\python.exe _test_timers.py   # timers, reminders, announcements
 .\.venv\Scripts\python.exe _test_hotkey.py   # push-to-talk really fires
 .\.venv\Scripts\python.exe _test_hud.py      # renders _hud_*.png to look at
 ```
@@ -171,8 +194,13 @@ brain runs against a stubbed client.
 - Barge-in listens for whole words, so it can only be as good as Vosk is in a
   room with speakers playing. It is deliberately restricted to a short word list
   for that reason.
-- Looking at the screen and answering from the web each cost a second API
-  request for that command; everything else is exactly one.
+- Looking at the screen, answering from the web, and transforming what you
+  copied each cost a second API request for that command; everything else is
+  exactly one. Reading the clipboard back verbatim costs nothing.
+- A timer never cuts into a conversation - it waits for the gap, so it can be
+  a few seconds late if you are mid-sentence. It does go off while listening
+  is paused, on the grounds that you asked for it yourself. Pending timers
+  live in `timers.json`, which is git-ignored.
 - What Stark remembers lives in `memory.json`, which is git-ignored. Delete the
   file to wipe it, or say "forget everything".
 - Shutdown/restart run on a 5-second delay; say "Hey Stark, cancel shutdown".
