@@ -19,12 +19,24 @@ It holds a conversation rather than taking one order at a time:
 - **Push-to-talk.** `Ctrl+Alt+S` wakes him without saying his name - handy in a
   loud room, or on a call. It works even while listening is paused.
 
+And he is no longer limited to what he already knew:
+
+- **He can see your screen.** "What's on my screen", "read me this error", "what
+  am I looking at" - he takes a screenshot and answers from it.
+- **He can look things up.** Weather, news, prices, scores, opening hours: he
+  answers out loud from a live web search rather than opening a tab, and prefers
+  it over his own knowledge whenever being out of date would matter.
+- **He remembers.** "Remember I park in level B2" sticks across restarts, and
+  "forget about the car" drops it again.
+
 ## How it works
 
 | Piece | Tech |
 |---|---|
-| Wake word + speech-to-text | [Vosk](https://alphacephei.com/vosk/) (offline, free) |
+| Wake word + when you start/stop talking | [Vosk](https://alphacephei.com/vosk/) (offline, free) |
+| What you actually said | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) `base.en` (offline, free) |
 | Brain (understands & decides) | Google Gemini (free tier, function calling) |
+| Eyes and live answers | Gemini vision + Google Search grounding |
 | Voice | edge-tts British neural (free) → pyttsx3/SAPI5 offline fallback; ElevenLabs optional |
 | HUD | PySide6 (Qt) - transparent, always-on-top, click-through |
 
@@ -34,7 +46,8 @@ speaks and updates the HUD via Qt signals.
 ## Setup
 
 Already done for you: a virtual environment in `.venv` with all dependencies,
-and the Vosk speech model in `models/`.
+and the Vosk speech model in `models/`. The Whisper model (~145 MB) downloads
+itself the first time Stark runs.
 
 **You only need a free Gemini API key.** Get one at
 <https://aistudio.google.com/apikey> (no credit card), then either:
@@ -66,6 +79,9 @@ speak. Example commands:
 - "Take a screenshot"
 - "Lock the computer"
 - "What's the capital of Australia?"
+- "What's on my screen?" · "Read me this error"
+- "What's the weather in Warsaw?" · "Who won the match last night?"
+- "Remember that I park in level B2" · "What do you know about me?"
 
 ## Screen & sound: the Quick Control panel
 
@@ -102,6 +118,15 @@ Edit `config.json` (created from defaults - see `config.py`):
   - Offline fallback always available: `tts_rate`, `tts_voice_hint`.
   - If edge/ElevenLabs fail (e.g. no internet), Stark falls back to the offline voice.
 - `command_timeout_sec` / `command_silence_sec` - how long it listens.
+- **Transcription:** `stt_engine` is `"whisper"` (default, accurate, costs about
+  0.6s after you stop speaking and a ~145 MB model on first use) or `"vosk"`
+  (instant, rougher - it hears "arrange my windows" as "a range my windows").
+  `whisper_model` can be `tiny.en` for speed or `small.en` for accuracy. If
+  Whisper can't load for any reason, Stark falls back to Vosk rather than going
+  deaf.
+- **Second-request tools:** `vision_model` and `search_model` override which
+  model looks at the screen and which answers from the web. Blank means
+  `gemini_model`. Both of those tools cost one extra request for that command.
 - **Conversation:** `followup_enabled` and `followup_window_sec` (default 7)
   control the no-wake-word window; set the window to `0` to turn follow-ups off.
 - **Interrupting:** `barge_in` on/off, and `barge_words` - the words that cut
@@ -132,6 +157,7 @@ brain runs against a stubbed client.
 .\.venv\Scripts\python.exe _test_voice.py    # wake, listening, barge-in, speech
 .\.venv\Scripts\python.exe _test_brain.py    # streaming, tool calls, errors
 .\.venv\Scripts\python.exe _test_flow.py     # follow-ups and interruptions
+.\.venv\Scripts\python.exe _test_tools.py    # memory, screen, web lookups
 .\.venv\Scripts\python.exe _test_hotkey.py   # push-to-talk really fires
 .\.venv\Scripts\python.exe _test_hud.py      # renders _hud_*.png to look at
 ```
@@ -145,5 +171,9 @@ brain runs against a stubbed client.
 - Barge-in listens for whole words, so it can only be as good as Vosk is in a
   room with speakers playing. It is deliberately restricted to a short word list
   for that reason.
+- Looking at the screen and answering from the web each cost a second API
+  request for that command; everything else is exactly one.
+- What Stark remembers lives in `memory.json`, which is git-ignored. Delete the
+  file to wipe it, or say "forget everything".
 - Shutdown/restart run on a 5-second delay; say "Hey Stark, cancel shutdown".
 - Everything except the brain runs offline. The brain needs internet + the key.
