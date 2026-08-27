@@ -5,6 +5,20 @@ arc-reactor HUD fades into the centre of your screen. Speak a command — open a
 app, search the web, ask a question, control the system — and Stark acts and
 replies out loud.
 
+It holds a conversation rather than taking one order at a time:
+
+- **Follow-ups.** After he answers, the microphone stays open for a few seconds
+  — a draining ring on the HUD shows how long — so the next thing you say needs
+  no wake word. "Open Chrome" … "now search for the weather".
+- **Interrupt him.** Say "stop" (or "stark", "cancel", "quiet", "enough",
+  "wait") while he's talking and he stops mid-sentence and listens. Words he is
+  saying himself are ignored, so the speakers can't interrupt him for you.
+- **He starts talking sooner.** The first sentence is spoken while Gemini is
+  still writing the rest, so an acknowledgement is out loud before the action it
+  refers to has even run.
+- **Push-to-talk.** `Ctrl+Alt+S` wakes him without saying his name — handy in a
+  loud room, or on a call. It works even while listening is paused.
+
 ## How it works
 
 | Piece | Tech |
@@ -77,7 +91,8 @@ keys when it isn't.
 Edit `config.json` (created from defaults — see `config.py`):
 
 - `wake_words` — phrases that activate Stark (default includes "stark", "hey stark").
-- `gemini_model` — Gemini model (default `gemini-2.5-flash`, fast & free-tier).
+- `gemini_model` — Gemini model (default `gemini-2.5-flash-lite`, which has a
+  much larger free-tier daily quota than `gemini-2.5-flash`).
 - **Voice:** `tts_engine` is `"edge"` (default, free British neural voice),
   `"elevenlabs"` (paid, most cinematic), or `"sapi"` (offline).
   - edge: `edge_voice` (default `en-GB-RyanNeural`; try `en-GB-ThomasNeural`,
@@ -87,6 +102,16 @@ Edit `config.json` (created from defaults — see `config.py`):
   - Offline fallback always available: `tts_rate`, `tts_voice_hint`.
   - If edge/ElevenLabs fail (e.g. no internet), Stark falls back to the offline voice.
 - `command_timeout_sec` / `command_silence_sec` — how long it listens.
+- **Conversation:** `followup_enabled` and `followup_window_sec` (default 7)
+  control the no-wake-word window; set the window to `0` to turn follow-ups off.
+- **Interrupting:** `barge_in` on/off, and `barge_words` — the words that cut
+  him off. Barge-in needs a neural voice; the offline SAPI fallback can't be
+  stopped part-way. If your speakers bleed badly into the mic, set it to `false`.
+- `stream_speech` — start speaking sentence one while the model writes the rest.
+  Off means one finished answer, one clip.
+- **Push-to-talk:** `hotkey_enabled` and `hotkey` (default `ctrl+alt+s`). If
+  another app already owns the combination, Stark says so in the log and carries
+  on answering to his name.
 - `hud_size` — diameter of the reactor in pixels.
 - `quickcontrol_dir` — where Quick Control lives (blank = look next to Stark).
 - `quickcontrol_autostart` — start Quick Control when a spoken command needs it.
@@ -97,9 +122,28 @@ Press `Win+R`, type `shell:startup`, and drop a shortcut to `run_stark.bat`
 there. For no console window, point the shortcut at:
 `.venv\Scripts\pythonw.exe stark.py`.
 
+## Tests
+
+No microphone, no API key and no sound needed — test speech is synthesized with
+the same voice Stark speaks with and fed straight into the recogniser, and the
+brain runs against a stubbed client.
+
+```powershell
+.\.venv\Scripts\python.exe _test_voice.py    # wake, listening, barge-in, speech
+.\.venv\Scripts\python.exe _test_brain.py    # streaming, tool calls, errors
+.\.venv\Scripts\python.exe _test_flow.py     # follow-ups and interruptions
+.\.venv\Scripts\python.exe _test_hotkey.py   # push-to-talk really fires
+.\.venv\Scripts\python.exe _test_hud.py      # renders _hud_*.png to look at
+```
+
+`_test_voice.py` needs `ffmpeg` on PATH to decode the test speech.
+
 ## Notes & limits
 
 - Wake-word matching is keyword-based on Vosk's transcription — "Stark" alone
   also triggers it. Add/adjust phrases in `wake_words`.
+- Barge-in listens for whole words, so it can only be as good as Vosk is in a
+  room with speakers playing. It is deliberately restricted to a short word list
+  for that reason.
 - Shutdown/restart run on a 5-second delay; say "Hey Stark, cancel shutdown".
 - Everything except the brain runs offline. The brain needs internet + the key.
