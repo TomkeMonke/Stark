@@ -91,6 +91,9 @@ DEFAULTS = {
     # request that is going to fail.
     "ollama_enabled": True,
     "ollama_host": "http://localhost:11434",
+    # llama3.2 (3B) got all 12 commands right in testing and reached for a tool
+    # on 4 of 9 conversational turns; qwen2.5:3b was the other way round. A
+    # fallback brain is there to do things, so this one is the default.
     "ollama_model": "llama3.2",
     "ollama_only": False,
     "ollama_takeover_min": 30,

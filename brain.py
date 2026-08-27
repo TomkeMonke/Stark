@@ -426,7 +426,10 @@ class Brain:
             said.append(line)
             yield line
 
-        for piece in local_brain.LocalBrain().ask_stream(
+        # The tools that go back to Gemini are no use if Gemini is why we
+        # are here: no key at all, or a limit we are still sitting out.
+        cloud_ok = self.client is not None and time.time() >= self._local_until
+        for piece in local_brain.LocalBrain(cloud_ok=cloud_ok).ask_stream(
                 self.history, self.instruction):
             said.append(piece)
             yield piece

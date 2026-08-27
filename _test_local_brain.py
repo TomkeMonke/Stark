@@ -3,8 +3,12 @@
 A real HTTP server runs on a spare port and speaks Ollama's protocol - the
 same newline-delimited JSON a real server streams - so the parsing, the
 streaming and the tool calls are exercised over a real socket. What is not
-exercised is a real model: no Ollama is installed here, so what the server
-sends is scripted.
+exercised is a real model: the server sends a script, so that a failing test
+means a broken change rather than a model having an off day.
+
+Some of what is scripted here is not hypothetical. Both the tool-call-written-
+as-prose and the reaching-for-a-cloud-tool cases below are transcripts of what
+llama3.2 actually did.
 
 Run:  .venv\\Scripts\\python.exe _test_local_brain.py
 """
@@ -39,8 +43,9 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 class FakeOllama:
     """Serves /api/tags and streams /api/chat, the way Ollama does."""
 
-    def __init__(self, script=None) -> None:
+    def __init__(self, script=None, then=None) -> None:
         self.script = script or []
+        self.then = then          # replies to the second request onwards
         self.requests: list[dict] = []
         outer = self
 
@@ -61,7 +66,9 @@ class FakeOllama:
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-ndjson")
                 self.end_headers()
-                for line in outer.script:
+                script = (outer.then if outer.then is not None
+                          and len(outer.requests) > 1 else outer.script)
+                for line in script:
                     payload = line if isinstance(line, bytes) else \
                         json.dumps(line).encode()
                     self.wfile.write(payload + b"\n")
@@ -161,6 +168,73 @@ def test_tool_conversion() -> None:
           all(f["description"] for f in by_name.values()))
 
 
+def test_cloud_tools_are_withheld() -> None:
+    print("\nthe tools that need Gemini")
+    with_cloud = {t["function"]["name"] for t in local_brain.tools(True)}
+    without = {t["function"]["name"] for t in local_brain.tools(False)}
+    check("normally every tool is offered", local_brain.CLOUD_TOOLS <= with_cloud,
+          local_brain.CLOUD_TOOLS - with_cloud)
+    check("the cloud ones are dropped when the cloud is the problem",
+          local_brain.CLOUD_TOOLS & without == set(), without)
+    check("and nothing else is dropped with them",
+          with_cloud - without == local_brain.CLOUD_TOOLS,
+          with_cloud - without)
+    check("the ones left are the ones that work offline",
+          {"window_control", "set_timer", "media_control", "read_clipboard"}
+          <= without)
+
+
+def test_call_written_as_prose() -> None:
+    print("\na tool call the model wrote out instead of calling")
+    seen = {}
+    original = B.DISPATCH
+    B.DISPATCH = dict(original,
+                      window_control=lambda a: (seen.update(a), "Minimized it.")[1])
+    try:
+        written = '{"name": "window_control", "arguments": {"action": "minimize"}}'
+        out, _ = one_turn([says(written, done=True)])
+        check("the JSON is never read out loud",
+              not any(line.startswith("{") for line in out), out)
+        check("it is run as the call it plainly is", seen == {"action": "minimize"},
+              seen)
+        check("and only the result is spoken", out == ["Minimized it."], out)
+
+        # The other shape models use, wrapped in a "function" object.
+        seen.clear()
+        wrapped = ('{"type": "function", "function": {"name": "window_control", '
+                   '"parameters": {"action": "maximize"}}}')
+        out, _ = one_turn([says(wrapped, done=True)])
+        check("the wrapped shape works too", seen == {"action": "maximize"}, seen)
+
+        # A tool it was never offered, which is how it asks for a cloud one.
+        out, server = one_turn(
+            [says('{"name": "answer_from_web", "parameters": {"q": "who won"}}',
+                  done=True)],
+            cloud_ok=False,
+            then=[says("I'm Stark, sir, at your service.", done=True)])
+        check("reaching for a tool it hasn't got means it wanted to talk",
+              out == ["I'm Stark, sir, at your service."], out)
+        check("so it is asked again with no tools at all",
+              len(server.requests) == 2 and not server.requests[1].get("tools"),
+              [r.get("tools") for r in server.requests])
+        check("and the JSON is never spoken",
+              not any("answer_from_web" in line for line in out), out)
+
+        out, _ = one_turn([says('{"name": "answer_from_web", "parameters": {}}',
+                                done=True)],
+                          cloud_ok=False,
+                          then=[says('{"name": "web_search"}', done=True)])
+        check("a retry that comes back as JSON too is refused, not read out",
+              out == ["I can't manage that one on the local model, sir."], out)
+
+        out, _ = one_turn([says("{this is not json, just an odd sentence}",
+                                done=True)])
+        check("ordinary text in braces is still spoken",
+              out == ["{this is not json, just an odd sentence}"], out)
+    finally:
+        B.DISPATCH = original
+
+
 def test_history_conversion() -> None:
     print("\nhanding over the conversation so far")
     history = [
@@ -190,10 +264,11 @@ def test_history_conversion() -> None:
 
 
 # ----- answering ---------------------------------------------------------
-def one_turn(script, text="hello"):
+def one_turn(script, text="hello", cloud_ok=True, then=None):
     history = [types.Content(role="user", parts=[types.Part(text=text)])]
-    with FakeOllama(script) as server:
-        out = list(local_brain.LocalBrain().ask_stream(history, "system prompt"))
+    with FakeOllama(script, then) as server:
+        out = list(local_brain.LocalBrain(cloud_ok=cloud_ok)
+                   .ask_stream(history, "system prompt"))
     return out, server
 
 
@@ -214,7 +289,11 @@ def test_streamed_answer() -> None:
     check("the tools went with it", len(sent["tools"]) == len(B.DISPATCH),
           len(sent["tools"]))
     check("and so did the system prompt",
-          sent["messages"][0]["content"] == "system prompt", sent["messages"][0])
+          sent["messages"][0]["content"].startswith("system prompt"),
+          sent["messages"][0])
+    check("with the warning small models need about calling tools",
+          "only call a tool when" in sent["messages"][0]["content"],
+          sent["messages"][0]["content"][-200:])
 
 
 def test_tool_call() -> None:
@@ -245,9 +324,10 @@ def test_tool_call() -> None:
         check("arguments sent as text are still understood",
               seen == {"action": "maximize", "target": "code"}, seen)
 
-        out, _ = one_turn([calls("summon_a_horse", {})])
-        check("a tool that doesn't exist is refused out loud",
-              "don't have a summon_a_horse" in out[0], out)
+        out, _ = one_turn([calls("summon_a_horse", {})],
+                          then=[says("There's no horse, sir.", done=True)])
+        check("a tool it invented is not run, and it gets another go",
+              out == ["There's no horse, sir."], out)
     finally:
         B.DISPATCH = original
 
@@ -262,7 +342,8 @@ def test_local_failures() -> None:
           len(out) == 1 and "not found" in out[0], out)
 
     out, _ = one_turn([says("", done=True)])
-    check("an empty answer is never silence", out == ["Done."], out)
+    check("an empty answer is never silence, and never a false success",
+          out == ["I didn't manage that one, sir."], out)
 
     saved = config.data.get("ollama_host")
     nowhere()
@@ -314,6 +395,9 @@ def test_fallback_on_daily_limit() -> None:
     check("the question reached the local model",
           server.requests[0]["messages"][-1]["content"] == "is chrome open",
           server.requests[0]["messages"][-1])
+    offered = {t["function"]["name"] for t in server.requests[0]["tools"]}
+    check("and it was not offered the tools that need the Gemini we just lost",
+          offered & local_brain.CLOUD_TOOLS == set(), offered)
     check("he stays on the local model for a while",
           b._local_until > 0 and b._prefer_local(), b._local_until)
 
@@ -390,6 +474,8 @@ def test_no_brain_at_all() -> None:
 def main() -> int:
     test_available()
     test_tool_conversion()
+    test_cloud_tools_are_withheld()
+    test_call_written_as_prose()
     test_history_conversion()
     test_streamed_answer()
     test_tool_call()

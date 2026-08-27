@@ -82,9 +82,16 @@ setx GEMINI_API_KEY "..."
 { "gemini_api_key": "..." }
 ```
 
-Or skip the key entirely: install [Ollama](https://ollama.com), `ollama pull
-llama3.2`, set `"ollama_only": true`, and Stark runs with no cloud and no
-account at all.
+Or skip the key entirely:
+
+```powershell
+winget install Ollama.Ollama
+ollama pull llama3.2
+```
+
+then set `"ollama_only": true` in `config.json`, and Stark runs with no cloud
+and no account at all. With a key, this is the fallback rather than the plan:
+nothing changes until Gemini can't answer.
 
 ## Run
 
@@ -226,9 +233,20 @@ brain runs against a stubbed client.
 - Snapping a window sets its position directly rather than sending Win+Left,
   which is a toggle and would bounce an already-snapped window back to the
   middle. If a window refuses to go, Stark says so instead of claiming it did.
-- The local brain is only as good as the model you pull; a small one will
-  handle "minimize this" happily and be worse company than Gemini. Stark never
-  installs it: `winget install Ollama.Ollama`, then `ollama pull llama3.2`.
+- The local brain is only as good as the model you pull, and the difference
+  is all in knowing when *not* to act. Measured here, 21 turns each: llama3.2
+  (3B) got every command right and reached for a tool on 4 of 9 pieces of plain
+  conversation; qwen2.5:3b talked properly every time but silently did nothing
+  on 2 of 12 commands. llama3.2 is the default because a fallback brain exists
+  to do things. Either is a poorer conversationalist than Gemini.
+- Because small models over-call, the local brain is not shown the three tools
+  that answer by going back to Gemini - they are exactly the ones that cannot
+  work when Gemini is why we are here. If it reaches for one anyway, that is
+  taken as a sign it wanted to talk, and it is asked again with no tools at
+  all, which is when it is at its best.
+- The first local answer after an idle spell takes 25-35 seconds on a CPU
+  while Ollama loads the model into memory; after that a turn is 4-5 seconds.
+  Stark says he is switching before the wait, not after.
 - What Stark remembers lives in `memory.json`, which is git-ignored. Delete the
   file to wipe it, or say "forget everything".
 - Shutdown/restart run on a 5-second delay; say "Hey Stark, cancel shutdown".
