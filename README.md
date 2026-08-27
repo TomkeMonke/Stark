@@ -1,15 +1,15 @@
-# Stark — your "Hey Stark" voice assistant
+# Stark - your "Hey Stark" voice assistant
 
 A Jarvis-style voice assistant for Windows. Say **"Hey Stark"** and a glowing
-arc-reactor HUD fades into the centre of your screen. Speak a command — open an
-app, search the web, ask a question, control the system — and Stark acts and
+arc-reactor HUD fades into the centre of your screen. Speak a command - open an
+app, search the web, ask a question, control the system - and Stark acts and
 replies out loud.
 
 It holds a conversation rather than taking one order at a time:
 
 - **Follow-ups.** After he answers, the microphone stays open for a few seconds
   (a draining ring on the HUD shows how long), so the next thing you say needs
-  no wake word. "Open Chrome" … "now search for the weather".
+  no wake word. "Open Chrome" ... "now search for the weather".
 - **Interrupt him.** Say "stop" (or "stark", "cancel", "quiet", "enough",
   "wait") while he's talking and he stops mid-sentence and listens. Words he is
   saying himself are ignored, so the speakers can't interrupt him for you.
@@ -26,7 +26,7 @@ It holds a conversation rather than taking one order at a time:
 | Wake word + speech-to-text | [Vosk](https://alphacephei.com/vosk/) (offline, free) |
 | Brain (understands & decides) | Google Gemini (free tier, function calling) |
 | Voice | edge-tts British neural (free) → pyttsx3/SAPI5 offline fallback; ElevenLabs optional |
-| HUD | PySide6 (Qt) — transparent, always-on-top, click-through |
+| HUD | PySide6 (Qt) - transparent, always-on-top, click-through |
 
 The Qt HUD runs on the main thread; a background thread listens → thinks →
 speaks and updates the HUD via Qt signals.
@@ -69,7 +69,7 @@ speak. Example commands:
 
 ## Screen & sound: the Quick Control panel
 
-Stark drives [Quick Control](../QuickControl) — the pop-up settings panel — for
+Stark drives [Quick Control](../QuickControl) - the pop-up settings panel - for
 anything to do with the screen, sound or window layout, so the panel's sliders
 always show what you asked for out loud:
 
@@ -88,10 +88,10 @@ keys when it isn't.
 
 ## Configure
 
-Edit `config.json` (created from defaults — see `config.py`):
+Edit `config.json` (created from defaults - see `config.py`):
 
-- `wake_words` — phrases that activate Stark (default includes "stark", "hey stark").
-- `gemini_model` — Gemini model (default `gemini-2.5-flash-lite`, which has a
+- `wake_words` - phrases that activate Stark (default includes "stark", "hey stark").
+- `gemini_model` - Gemini model (default `gemini-2.5-flash-lite`, which has a
   much larger free-tier daily quota than `gemini-2.5-flash`).
 - **Voice:** `tts_engine` is `"edge"` (default, free British neural voice),
   `"elevenlabs"` (paid, most cinematic), or `"sapi"` (offline).
@@ -101,7 +101,7 @@ Edit `config.json` (created from defaults — see `config.py`):
     (or `elevenlabs_api_key` in config.json) and optionally `elevenlabs_voice_id`.
   - Offline fallback always available: `tts_rate`, `tts_voice_hint`.
   - If edge/ElevenLabs fail (e.g. no internet), Stark falls back to the offline voice.
-- `command_timeout_sec` / `command_silence_sec` — how long it listens.
+- `command_timeout_sec` / `command_silence_sec` - how long it listens.
 - **Conversation:** `followup_enabled` and `followup_window_sec` (default 7)
   control the no-wake-word window; set the window to `0` to turn follow-ups off.
 - **Interrupting:** `barge_in` on/off, and `barge_words` - the words that cut
@@ -112,9 +112,9 @@ Edit `config.json` (created from defaults — see `config.py`):
 - **Push-to-talk:** `hotkey_enabled` and `hotkey` (default `ctrl+alt+s`). If
   another app already owns the combination, Stark says so in the log and carries
   on answering to his name.
-- `hud_size` — diameter of the reactor in pixels.
-- `quickcontrol_dir` — where Quick Control lives (blank = look next to Stark).
-- `quickcontrol_autostart` — start Quick Control when a spoken command needs it.
+- `hud_size` - diameter of the reactor in pixels.
+- `quickcontrol_dir` - where Quick Control lives (blank = look next to Stark).
+- `quickcontrol_autostart` - start Quick Control when a spoken command needs it.
 
 ## Start automatically at login (optional)
 
@@ -140,7 +140,7 @@ brain runs against a stubbed client.
 
 ## Notes & limits
 
-- Wake-word matching is keyword-based on Vosk's transcription — "Stark" alone
+- Wake-word matching is keyword-based on Vosk's transcription - "Stark" alone
   also triggers it. Add/adjust phrases in `wake_words`.
 - Barge-in listens for whole words, so it can only be as good as Vosk is in a
   room with speakers playing. It is deliberately restricted to a short word list

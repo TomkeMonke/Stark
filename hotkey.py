@@ -3,7 +3,7 @@
 Windows has no cross-process hotkey API in Qt, so we go straight to
 ``RegisterHotKey`` and read WM_HOTKEY off the Qt event loop's own message queue
 via a native event filter. Registering with a NULL window posts the message to
-the *thread* queue, which is why this must be set up on the GUI thread -- Qt's
+the *thread* queue, which is why this must be set up on the GUI thread - Qt's
 dispatcher is the only thing pumping it.
 
 The hotkey simply sets a threading.Event; the voice worker watches that event

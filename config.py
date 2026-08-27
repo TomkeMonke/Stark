@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 MODELS_DIR = BASE_DIR / "models"
 
-# Vosk small English model — downloaded automatically on first run.
+# Vosk small English model - downloaded automatically on first run.
 VOSK_MODEL_NAME = "vosk-model-small-en-us-0.15"
 VOSK_MODEL_URL = (
     "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
@@ -21,11 +21,11 @@ VOSK_MODEL_URL = (
 VOSK_MODEL_DIR = MODELS_DIR / VOSK_MODEL_NAME
 
 DEFAULTS = {
-    # Brain — Google Gemini (free tier via https://aistudio.google.com/apikey)
+    # Brain - Google Gemini (free tier via https://aistudio.google.com/apikey)
     "gemini_api_key": "",
     "gemini_model": "gemini-2.5-flash-lite",  # much higher free-tier daily quota
     "max_tokens": 1024,
-    # Wake word — any of these phrases activates Stark.
+    # Wake word - any of these phrases activates Stark.
     "wake_words": ["stark", "hey stark", "hi stark", "okay stark"],
     # Extra words that count as the wake word (common Vosk mishearings of
     # "stark"). Add more if Stark keeps mishearing you; remove ones that cause
@@ -36,11 +36,11 @@ DEFAULTS = {
     "chime_volume": 0.12,      # 0.0 (silent) .. 1.0 (full)
     # Voice engine: "edge" (free neural), "elevenlabs" (paid), "sapi" (offline)
     "tts_engine": "edge",
-    # edge-tts — free Microsoft neural voices (British Jarvis = en-GB-RyanNeural)
+    # edge-tts - free Microsoft neural voices (British Jarvis = en-GB-RyanNeural)
     "edge_voice": "en-GB-RyanNeural",
     "edge_rate": "+0%",
     "edge_pitch": "+0Hz",
-    # ElevenLabs — paid; set a key (here or ELEVENLABS_API_KEY) and tts_engine
+    # ElevenLabs - paid; set a key (here or ELEVENLABS_API_KEY) and tts_engine
     # to "elevenlabs" to enable. Default voice is "George" (British male).
     "elevenlabs_api_key": "",
     "elevenlabs_voice_id": "JBFqnCBsd6RMkjVDRZzb",
@@ -70,7 +70,7 @@ DEFAULTS = {
     "hotkey": "ctrl+alt+s",
     # HUD
     "hud_size": 460,
-    # Quick Control — the pop-up settings panel Stark drives for screen and
+    # Quick Control - the pop-up settings panel Stark drives for screen and
     # sound. Empty dir means "look next to Stark, then in the home folder".
     "quickcontrol_dir": "",
     "quickcontrol_autostart": True,  # start the panel if a command needs it

@@ -1,5 +1,5 @@
-# Stark — voice assistant dependencies
-google-genai>=0.3.0    # Google Gemini API (the "brain" — free tier)
+# Stark - voice assistant dependencies
+google-genai>=0.3.0    # Google Gemini API (the "brain" - free tier)
 vosk>=0.3.45           # offline speech-to-text + wake word
 sounddevice>=0.4.6     # microphone capture
 pyttsx3>=2.90          # offline text-to-speech fallback

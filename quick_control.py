@@ -1,13 +1,13 @@
 """Bridge to Quick Control, the user's quick-settings panel.
 
-Quick Control owns this machine's screen and sound state — brightness, warm
-mode, volume, window layouts — and keeps its own UI in step with it, so Stark
+Quick Control owns this machine's screen and sound state - brightness, warm
+mode, volume, window layouts - and keeps its own UI in step with it, so Stark
 asks the panel to make changes rather than poking the hardware behind its back.
 The panel writes its own replies; Stark speaks them as they come.
 
 Transport is the panel's local named pipe (the same one its Claude Code notifier
 uses): one JSON object in, one newline-terminated JSON object back. We use plain
-file I/O rather than Qt, because this runs on Stark's worker thread — and we do
+file I/O rather than Qt, because this runs on Stark's worker thread - and we do
 it inside a helper thread so a busy panel can never wedge the voice loop.
 """
 from __future__ import annotations
@@ -84,7 +84,7 @@ def _talk(payload: dict) -> dict | None:
 
 
 def _request(payload: dict, timeout: float = TIMEOUT) -> tuple[dict | None, str]:
-    """Send a payload. Returns (reply, error) — error is "" when all is well.
+    """Send a payload. Returns (reply, error) - error is "" when all is well.
 
     The pipe read blocks until the panel answers, so it happens on a throwaway
     thread we can walk away from: a panel stuck behind a modal dialog costs one
@@ -112,7 +112,7 @@ def _request(payload: dict, timeout: float = TIMEOUT) -> tuple[dict | None, str]
     error = box.get("error", "")
     reply = box.get("reply")
     if not error and reply is None:
-        # Connected, but nothing came back — an older build with no command
+        # Connected, but nothing came back - an older build with no command
         # layer, or a panel that died mid-answer.
         return None, "silent"
     return reply, error
@@ -203,7 +203,7 @@ def command(verb: str, value=None, target=None) -> str:
 def try_command(verb: str, value=None, target=None) -> str | None:
     """Like command(), but never starts the panel and gives up quietly.
 
-    For places where Stark has its own fallback — routing volume through the
+    For places where Stark has its own fallback - routing volume through the
     panel when it's up, and through the media keys when it isn't. None means
     "use your fallback"; a timeout doesn't, because a slow panel usually runs
     the queued command in the end, and doing it twice would move the volume

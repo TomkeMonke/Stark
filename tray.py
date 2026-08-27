@@ -69,7 +69,7 @@ def create_tray(app, on_quit, on_toggle_pause=None, start_paused=False,
 
     def _on_pause(checked: bool) -> None:
         pause_action.setText("Resume listening" if checked else "Pause listening")
-        tray.setToolTip("Stark — paused" if checked else 'Stark — say "Hey Stark"')
+        tray.setToolTip("Stark - paused" if checked else 'Stark - say "Hey Stark"')
         if on_toggle_pause is not None:
             on_toggle_pause(checked)
 
@@ -77,7 +77,7 @@ def create_tray(app, on_quit, on_toggle_pause=None, start_paused=False,
     # Reflect the remembered pause state (also sets the label + tooltip).
     pause_action.setChecked(start_paused)
     if not start_paused:
-        tray.setToolTip('Stark — say "Hey Stark"')
+        tray.setToolTip('Stark - say "Hey Stark"')
     menu.addAction(pause_action)
 
     menu.addSeparator()

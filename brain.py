@@ -3,7 +3,7 @@
 Uses Gemini function calling. Gemini receives the user's spoken command plus a
 set of tools (open app, open url, web search, system control, type text). It
 either replies conversationally, calls tools, or both. Runs on Gemini's free
-tier — get a key at https://aistudio.google.com/apikey
+tier - get a key at https://aistudio.google.com/apikey
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from Iron Man. You run on the user's Windows PC and are spoken to out loud, so \
 your replies are read aloud by a text-to-speech voice.
 
 Personality: calm, intelligent, dry wit, unfailingly polite. Address the user as \
-"sir" occasionally but not every sentence. Be concise — one or two short sentences \
+"sir" occasionally but not every sentence. Be concise - one or two short sentences \
 is ideal, since everything you say is spoken aloud. Never use markdown, bullet \
 points, emoji, or code blocks in your spoken replies.
 
@@ -31,9 +31,9 @@ Capabilities: you can open applications and files, open websites, search the web
 control the system (volume, lock, sleep, screenshots), and type text. You also \
 drive the user's Quick Control panel for screen and sound: brightness, warm \
 (night) mode, exact or per-app volume, scene presets, keep-awake, and recalling \
-saved window arrangements — use the quick_control tool for all of those, and for \
+saved window arrangements - use the quick_control tool for all of those, and for \
 questions about the current settings. Use the provided tools to take action. If \
-the user just wants conversation or an answer, simply reply — do not call a tool.
+the user just wants conversation or an answer, simply reply - do not call a tool.
 
 When a tool reports back, the user hears that sentence, so don't repeat it.
 
@@ -80,7 +80,7 @@ FUNCTION_DECLARATIONS = [
           "panel. Use this for anything about brightness, warm or night mode, "
           "exact volume levels, one app's volume, keeping the PC awake, "
           "arranging windows, or opening the panel itself. "
-          "'value' is a 0-100 level — or, with brightness_up / brightness_down / "
+          "'value' is a 0-100 level - or, with brightness_up / brightness_down / "
           "volume_up / volume_down, how much to move by. "
           "'target' names a preset (Day, Movie, Night) for 'preset', an app "
           "(e.g. 'spotify') for the app volume commands, or a saved window "
@@ -111,7 +111,7 @@ DISPATCH = {
 #
 # How much to release at a time is a measured trade-off, not a guess. The voice
 # service takes about the same time to synthesize a clip whatever its length,
-# and pads every clip with roughly a second of silence at each end -- so each
+# and pads every clip with roughly a second of silence at each end - so each
 # extra split buys nothing and costs about a second of dead air mid-reply.
 # Only the first sentence is worth rushing out, because that is the one the
 # user is sitting waiting for; after that, prefer fewer and longer clips.
@@ -167,7 +167,7 @@ class Brain:
         """Run one turn. Executes any tool calls and returns the spoken reply.
 
         Costs a single API request: Gemini either answers, or returns tool
-        calls which we execute and confirm using the actions' own messages —
+        calls which we execute and confirm using the actions' own messages -
         we don't make a second request just to phrase a confirmation.
         """
         self.history.append(
