@@ -264,6 +264,47 @@ def test_wake_interruptions(engine: VoiceEngine) -> None:
     announce.clear()
 
 
+def test_level_meter(engine: VoiceEngine) -> None:
+    """The HUD's voiceprint has to answer the room, not a canned animation."""
+    print("\nlevel meter")
+    engine._env.clear()
+
+    quiet = engine.next_level()
+    check("a silent mic reads zero", quiet == 0.0, quiet)
+
+    engine._meter(silence(0.5))
+    check("silence fills the envelope with silence",
+          max(engine._env) < 0.02, max(engine._env))
+
+    engine._env.clear()
+    speech = pcm("Stark, are you there?")
+    mid = len(speech) // 2 // 2 * 2  # past the lead-in, into the words
+    engine._meter(speech[mid:mid + BLOCK_BYTES])
+    check("speech fills it with something", max(engine._env) > 0.05,
+          max(engine._env))
+    check("one block becomes a whole envelope", len(engine._env) >= 20,
+          len(engine._env))
+    check("and nothing clips past full", max(engine._env) <= 1.0,
+          max(engine._env))
+
+    # The HUD asks far more often than blocks arrive, so a starved envelope
+    # has to fall away rather than freeze the ring mid-word.
+    engine._env.clear()
+    engine._env.append(1.0)
+    first = engine.next_level()
+    second = engine.next_level()
+    third = engine.next_level()
+    check("the level plays back the sample it was given", first == 1.0, first)
+    check("then decays when nothing new arrives",
+          0.0 < third < second < first, (second, third))
+
+    # A block too short to slice is ignored rather than raising on the audio
+    # driver's own thread.
+    engine._env.clear()
+    engine._meter(b"\x00\x01")
+    check("a runt block is dropped, not fatal", not engine._env)
+
+
 def test_speaks_a_stream() -> None:
     print("\nspeaking a live stream (played silently)")
     engine = VoiceEngine.__new__(VoiceEngine)  # no mic needed to synthesize
@@ -325,6 +366,7 @@ def main() -> int:
     test_followup_window(engine)
     test_barge_detection(engine)
     test_wake_interruptions(engine)
+    test_level_meter(engine)
     engine.close()
 
     test_speaks_a_stream()

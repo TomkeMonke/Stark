@@ -71,6 +71,7 @@ class Controller(QObject):
     state = Signal(str)
     text = Signal(str)
     followup = Signal(float)
+    audio = Signal(object)  # hands the HUD something to read the mic level from
 
 
 def speak_reply(ctrl: Controller, voice, brain, command: str) -> bool:
@@ -176,6 +177,9 @@ def worker(ctrl: Controller, paused: threading.Event,
         traceback.print_exc()
         return
 
+    # Let the HUD's voiceprint answer the actual microphone.
+    ctrl.audio.emit(voice.next_level)
+
     if paused.is_set():
         print("[stark] started paused - listening is off. Resume it from the tray.")
     else:
@@ -239,6 +243,7 @@ def main() -> int:
     ctrl.state.connect(hud.set_state, Qt.QueuedConnection)
     ctrl.text.connect(hud.set_text, Qt.QueuedConnection)
     ctrl.followup.connect(hud.start_followup, Qt.QueuedConnection)
+    ctrl.audio.connect(hud.set_level_source, Qt.QueuedConnection)
 
     # Shared flag: when set, the worker stays dormant and ignores the mic.
     # The last state is remembered in config.json across restarts.

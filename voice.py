@@ -18,6 +18,7 @@ struck from the list - otherwise the speakers would interrupt him for you.
 """
 from __future__ import annotations
 
+import array
 import json
 import os
 import queue
@@ -26,6 +27,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections import deque
 from urllib.request import urlopen
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")  # silence pygame banner
@@ -45,6 +47,12 @@ BARGE_GRACE_SEC = 0.35
 # How much audio from before Vosk noticed speech to keep for Whisper.
 LEAD_IN_SEC = 1.5
 LEAD_IN_BYTES = int(SAMPLE_RATE * 2 * LEAD_IN_SEC)  # 16-bit mono
+# The HUD's voiceprint wants a loudness sample per drawn frame, but a block
+# is half a second of audio. Each block is cut into this many slices, which
+# at 60fps is one slice per frame - so the envelope keeps the shape of what
+# was actually said instead of stepping twice a second.
+METER_SUBS = 30
+METER_FULL = 9000.0  # int16 peak counted as loud; the HUD auto-gains anyway
 
 _WORDS = re.compile(r"[a-z']+")
 
@@ -91,6 +99,11 @@ class VoiceEngine:
         self._model = Model(str(VOSK_MODEL_DIR))
         self._rec = KaldiRecognizer(self._model, SAMPLE_RATE)
         self._q: queue.Queue = queue.Queue()
+        # Loudness envelope for the HUD. Filled by the audio callback, drained
+        # a sample at a time. Capped, so a HUD that has been hidden a while
+        # can't come back and replay a backlog of stale audio.
+        self._env: deque = deque(maxlen=METER_SUBS + 15)
+        self._env_last = 0.0
         self._stream = sd.RawInputStream(
             samplerate=SAMPLE_RATE,
             blocksize=BLOCK,
@@ -199,7 +212,43 @@ class VoiceEngine:
 
     # ----- audio plumbing -----------------------------------------------
     def _on_audio(self, indata, frames, time_info, status):  # noqa: D401
-        self._q.put(bytes(indata))
+        data = bytes(indata)
+        self._q.put(data)
+        self._meter(data)
+
+    def _meter(self, data: bytes) -> None:
+        """Chop one block into a loudness envelope for the HUD.
+
+        This runs on the audio driver's own callback thread, so anything that
+        goes wrong here is swallowed: a decorative ring is never worth taking
+        the microphone down for.
+        """
+        try:
+            samples = array.array("h")
+            samples.frombytes(data[:len(data) // 2 * 2])
+            step = len(samples) // METER_SUBS
+            if step < 1:
+                return
+            for i in range(METER_SUBS):
+                chunk = samples[i * step:(i + 1) * step]
+                peak = max(max(chunk), -min(chunk))
+                self._env.append(min(1.0, peak / METER_FULL))
+        except Exception:
+            pass
+
+    def next_level(self) -> float:
+        """One 0..1 loudness sample for the HUD, oldest first.
+
+        Audio arrives in half-second blocks and the HUD asks sixty times a
+        second, so the envelope is played back rather than sampled. That puts
+        it half a second behind, which doesn't read as lag on a ring that is a
+        picture of what was just said in the first place.
+        """
+        if self._env:
+            self._env_last = self._env.popleft()
+        else:
+            self._env_last *= 0.75  # starved: decay rather than snap to zero
+        return self._env_last
 
     def _drain(self) -> None:
         while not self._q.empty():
